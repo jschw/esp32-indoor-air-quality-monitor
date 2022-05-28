@@ -1,10 +1,8 @@
 #include <Arduino.h>
-#include "RTClib.h"
 #include "time.h"
 #include "Preferences.h"
 #include "WiFi.h"
 #include "ESPmDNS.h"
-
 #include "LEDMatrix.h"
 #include "EventLog.h"
 
@@ -13,16 +11,7 @@
 #include "FastLED.h"
 
 //Number of LEDs in Array for front/back
-//Grosse Uhr
-#define NUM_LEDS_BL 28
-//Kleine Uhr
-//Achtung: Hier passt irgendwas mit der Anzahl nicht!
-//Mit BL
-//#define NUM_LEDS_BL 17
-//Kein BL
-//#define NUM_LEDS_BL 0
-
-#define NUM_LEDS (110+NUM_LEDS_BL)
+#define NUM_LEDS 3
 
 //Data pins for front/back
 #define DATA_PIN 18
@@ -30,158 +19,40 @@
 CRGB leds[NUM_LEDS];
 
 //Set current firmware version
-extern const char SW_VERSION[] = {"4.1.2"};
-//1.0.0: (Jan 2018) Initial proof of concept on AVR platform
-//1.1.0: Fade in/out added
-//2.0.0: Ported to ESP32 platform
-//2.1.0: Standbymode added, support for lightsensor added
-//2.2.0: Support for BL added
-//2.3.0: Animated standbymode "Twinkle" added
-//2.4.0: Support for touch sensor added
-//3.0.0: (Jul 2019) WiFi support with web based config app added
-//3.2.0: Minor bugfixes -> Initial release
-//4.0.0: (Dez 2019) Update to SDK version 1.4.0, reduced clock speed to 160MHz
-//4.1.0: Timesync with NTP server added, graphic show mode added, minute display with BL added
-//4.1.1: EventLog added
-//4.1.2: Redirection to startpage after config change added in web app
+extern const char SW_VERSION[] = {"1.0.0"};
+//1.0.0: 28.05.2022 -> Initial proof of concept with wordclock base
 
-String netDevName = "wordclock";
+String netDevName = "airquality";
 String deviceIP = "";
 
 int commErrorCounter = 0;
 
-RTC_DS3231 rtc;
-//RTC_DS1307 rtc;
-
-
 Preferences settings;
 
-const int ldrPin = 32;
-const int touchPin = 14;
-
 String mode = "";
-String standbyMode = "TWINKLE";
-String standbyModeSaved = standbyMode;
 
-bool standby = false;
-bool enableAutoStandby = true;
-bool forceStandby = false;
-bool isInStandby = false;
-bool isInPresentationMode = false;
 //debug settings
 bool debugmode = false;
-//send matrix as characters to serial
-bool debugmatrix = false;
 
 unsigned long refresh_interval=500;
 unsigned long previousMillis=0;
 bool firstRun = true;
 
-//Time
-int current_min = 0;
-int current_hour = 0;
-int current_min_rtc = 0;
-int hour_unconverted = 0;
-int previousDaytimeSection = -1;
-bool refreshed = false;
-bool tmpFadeSetting = false;
-bool firstCycle = true;
-bool isSummertime = true;
-bool enableTimeSync = true;
-//Time sync NTP settings
-const char* ntpServer = "europe.pool.ntp.org";
-const long  gmtOffset_sec = 3600;
-int   daylightOffset_sec = 3600;
-bool timeSynced = false;
-bool timeSyncFail = false;
-
-
 //LED settings
-int rgbcolor[3] = {201,226,255};
-int rgbcolorSec1[3] = {201,226,255};
-int rgbcolorSec3[3] = {201,226,255};
-int rgbcolorBL[3] = {201,226,255};
-int rgbcolorMin[3] = {255,0,0};
 uint8_t brightness = 40;
+bool ledsEnabled = true;
 //automatic brightness adjustment
-bool autoBrightness = true;
-uint8_t lastBrightnessChange = 0;
-//set fade in/out effect
-bool fadeInOut = true;
-//is it a fade to/from standby?
-bool fadeInBL = true;
-bool fadeOutBL = false;
-//use different color for section 1
-bool colorSec1 = false;
-//use different color for section 3
-bool colorSec3 = false;
-//if both false -> all leds use rgbcolor
-int colorMode = 1;
-//0 = manual
-//1 = auto daylight default
-//2 = auto daylight wifi
-//3 = auto weather
-
-
-//====== Backlight functionality ======
-bool enableBacklight = false;
-bool blockBacklight = false;
-bool blNeedRefresh = true;
-//Modes:
-//daylight, rainbow, manual
-String backlightMode = "rainbow";
-static uint8_t hue_actual = 0;
-static uint8_t sat = 130;
-static uint8_t val = 255;
-
-unsigned long currentMillisBLTimer = 0;
-unsigned long previousMillisBLTimer = 0;
-int delay_backlight_rainbow = 400;
-
-//display minutes with backlight
-//Modes:
-//0: Off , 1: Middle of each side, 2: Edges
-//3: Middle only one, 4: Edges only one
-int displayMinutes = 0;
-
-//Set colormode for minutes display with BL
-//0 -> Manual color set with rgbcolorMin
-//1 -> Automatic changing color with daylight
-int colormodeMin = 0;
-
-
-//======= other settings ========
-//language
-//0 -> Hochdeutsch
-//1 -> Schwaebisch
-//2 -> Englisch
-int clockLang = 0;
-//turn sections on or off
-bool activateSec1 = true;
-bool activateSec3 = true;
-//activate touch functionality on frame
-bool enableTouch = false;
-
-//turn on standby mode at sensor value below lightlevel
-int lightlevel = 10;
-int lastStandbyValue = 0;
-
-LEDMatrix ledMatrixObj;
-//set pointer to public array in LEDMatrix object
-//int (*ledPanelMatrix)[10][11] = &ledMatrixObj.ledMatrix;
-//- Obsolete: matrix is directly accessible now -
-int ledMatrixSaved[10][11];
 
 ////=====Logging functionality======
 EventLog logging;
 bool logToSerial;
 
-
 ////=====WiFi functionality======
 bool wifiActive = false;
+bool wifiEnabled = true;
 static volatile bool wifiConnected = false;
 //#define AP_SSID "Wordclock_WiFi_Config";       //can set ap hostname here
-String wifi_config_SSID = "Wordclock_WiFi_Config";
+String wifi_config_SSID = "Airquality_WiFi_Config";
 WiFiServer server(80);
 WiFiClient client;
 String wifiSSID="", wifiPassword="";
@@ -191,6 +62,15 @@ unsigned long currentMillisWifiTimer = 0;
 unsigned long previousMillisWifiTimer = 0;
 unsigned long currentMillisWifiTimer2 = 0;
 unsigned long previousMillisWifiTimer2 = 0;
+
+////=====MQTT functionality======
+bool mqttEnabled = true;
+String mqttIp = "192.160.0.1";
+int mqttPort = 1883;
+String mqttSendTopic = "myroom";
+String mqttClientName = "ESP32Airquality";
+String mqttUserName = "";
+String mqttPassword = "";
 
 void wifiStartAPmode();
 void wifiAPClientHandle();
@@ -203,34 +83,15 @@ int cycleCounter = 0;
 
 //Functions
 void controlSwitch();
-void controlBacklight();
-int getLightSensorValue();
-int readTouchSens();
 void setPixel(int Pixel, int red, int green, int blue);
-void testLedMatrix(int red, int blue, int green);
-void testBLMatrix(int red, int blue, int green);
-void testPower();
 void setLedMatrix(int hour, int min);
 void showStrip();
-void setMinutesBL(int min);
-void saveMatrix(bool reset);
-bool matrixChanges();
-void fadeInChanges(int speed);
-void fadeOutChanges(int speed);
 void softRefresh();
-bool inSec1(int led);
-bool inSec3(int led);
 void setDefaults();
-void setDaylightColor(int hour);
-void setDaylightColorMin(int hour);
-void setAutoBrightness();
 String getWiFiKey(bool keyTypeShort); //keyTypeShort=true -> first+last two digits, otherwise -> complete
 String getConfig();
 String getDebugData();
 void importConfig(String confStr);
-bool summertime_EU(int year, byte month, byte day, byte hour, byte tzHours);
-void getTimeNTP(int &hour, int &min, int &sec, int &day, int &month, int &year);
-int convertMin(int min);
 void Log_println(String msg, int loglevel=0); //<-- Wrapper function for logging class
 
 //Config
@@ -238,21 +99,10 @@ bool readConfigFromFlash();
 void writeConfigToFlash();
 bool configStored = false;
 
-
-//Standby sequences
-void standby_Twinkle(bool forced);
-
-//void setLedRow(int row, int array[]);
-
-void refreshLedPanel(bool serialOutput);
 void clearLedPanel();
-void clearBacklight();
 
 void setup()
 {
-	//Set minutes display off for small clock or clock w/o BL
-	if(NUM_LEDS_BL != 28) displayMinutes = 0;
-
 	//Open serial interface
 	Serial.begin(9600);
 
@@ -262,11 +112,6 @@ void setup()
 
 	//Turn off Bluetooth
 	btStop();
-
-	if (!rtc.begin()) {
-		Log_println("Couldn't find RTC",2);
-		while (1);
-	}
 
 	//init FastLED
 	pinMode(DATA_PIN, OUTPUT);
@@ -281,13 +126,10 @@ void setup()
 	if(readConfigFromFlash()) configStored=true;
 	else writeConfigToFlash();
 
-	//light blue wifi sign and wait to turn wifi on or not
-	//LED numbers: W 52 I 35 F 55 I 54
-	//or: W 93 I 82 F 55 i 54
-	setPixel(52,40,115,255);
-	setPixel(35,40,115,255);
-	setPixel(55,40,115,255);
-	setPixel(54,40,115,255);
+	//Light all 3 LEDs in a color to signal boot process
+	setPixel(0,40,115,255);
+	setPixel(1,40,115,255);
+	setPixel(2,40,115,255);
 	showStrip();
 	delay(200);
 	Log_println("Ready for Wifi!");
@@ -295,67 +137,7 @@ void setup()
 	//Check if ssid / key are already stored
 	if(!wifiSSID.equals("") && !wifiPassword.equals("")) wifiActive = true;
 
-
-	//wait 4 seconds for interaction
-	currentMillisWifiTimer = millis();
-	previousMillisWifiTimer = currentMillisWifiTimer;
-	bool wifiActivatedPrevLoop = false;
-
-	while((unsigned long)(currentMillisWifiTimer - previousMillisWifiTimer) <= 4000){
-		//Check touch sensor
-		if(wifiActivatedPrevLoop) break;
-		if(readTouchSens()>=30){
-			//if sensor touched
-			//wait for second touch
-			currentMillisWifiTimer2 = millis();
-			previousMillisWifiTimer2 = currentMillisWifiTimer2;
-			delay(100);
-			while((unsigned long)(currentMillisWifiTimer2 - previousMillisWifiTimer2) <= 500){
-				if(readTouchSens()>=30){
-					clearLedPanel();
-					delay(400);
-					setPixel(52,40,115,255);
-					setPixel(35,40,115,255);
-					setPixel(55,40,115,255);
-					setPixel(54,40,115,255);
-					showStrip();
-					delay(400);
-					clearLedPanel();
-					delay(400);
-					setPixel(52,40,115,255);
-					setPixel(35,40,115,255);
-					setPixel(55,40,115,255);
-					setPixel(54,40,115,255);
-					showStrip();
-					delay(400);
-					clearLedPanel();
-					delay(400);
-					setPixel(52,250,240,30);
-					setPixel(35,250,240,30);
-					setPixel(55,250,240,30);
-					setPixel(54,250,240,30);
-					showStrip();
-
-					Log_println("WiFi is Activated!");
-
-					wifiActive = true;
-					wifiConfigMode = true;
-					wifiActivatedPrevLoop = true;
-
-					currentMillisWifiTimer2=0;
-					previousMillisWifiTimer2=0;
-					break;
-				}
-				currentMillisWifiTimer2 = millis();
-			}
-		}else{
-			//clearLedPanel();
-		}
-		currentMillisWifiTimer = millis();
-	}
-
-
-	if(!wifiActive){
+	if(!wifiActive || !wifiEnabled){
 		Log_println("WiFi not active, continue booting...");
 		WiFi.mode(WIFI_OFF);
 		clearLedPanel();
@@ -364,1087 +146,266 @@ void setup()
 		Log_println("WiFi active, try to connect...");
 		wifiConnect();
 	}
-
-	//get time from NTP if wifi is connected
-	if(wifiConnected && enableTimeSync){
-		//set daytime offset correct
-		if(isSummertime) daylightOffset_sec = 3600;
-		else daylightOffset_sec = 0;
-
-		//init and get the time
-		configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-
-		Log_println("Synchronizing time with server '" + String(ntpServer) + "'...");
-		int timeSyncTrials = 0;
-
-		while(!time(nullptr)){
-			//Log_println(".");
-			delay(200);
-			if(timeSyncTrials > 10)
-			{
-				timeSyncFail = true;
-				break;
-			}
-			else timeSyncTrials++;
-		}
-
-	}
-
-	//init matrix
-	saveMatrix(true);
-
-	//set language
-	ledMatrixObj.clockLanguage = clockLang;
-
-	//set sections on or off
-	ledMatrixObj.sec1Active = activateSec1;
-	ledMatrixObj.sec3Active = activateSec3;
-
-	//get daylight color first time if turned on
-	if(colorMode==1) setDaylightColor(rtc.now().hour());
-	if(colormodeMin==1) setDaylightColorMin(rtc.now().hour());
-
-	//test backlight
-	//fill_solid(backlight, NUM_LEDS_BL, CRGB::Red);
-	//FastLED[1].showLeds(brightness_BL);
 }
 
 void Log_println(String msg, int loglevel){
 	//Wrapper function for logging with timestamp and redirect to serial
 	if(logToSerial) Serial.println(msg);
 
-	DateTime now = rtc.now();
-	logging.setTimestamp((String)now.hour() + ":" + (String)now.minute() + " --> ");
+	logging.setTimestamp(" --> ");
 
 	logging.println(msg, loglevel);
 
 }
 
 void controlSwitch(){
-	//SET_TIME 2017,12,28,16,0,0
-	//GET_TIME
-	//GET_INTERNETTIME
-	//TOGGLE_TIMESYNCSTATE
-	//TOGGLE_SUMMERTIME_MARKER  <- directly toggles the bit "isSummerTime" without correcting the rtc time
-	//TOGGLE_SUMMERTIME  <- toggles summertime marker WITH correction the time
-	//Info: true -> false -> minus 1 hour , false -> true -> plus 1 hour
-	//SET_LANGUAGE 0
-	//SET_DEVICENAME NeuerName <- set the Wifi DNS name: http://devicename.local
-	//SET_STANDBY_JUS  SET_STANDBY_CHE  SET_STANDBY_XMASTREE  SET_STANDBY_NULL  SET_STANDBY_OFF SET_STANDBY_TWINKLE
-	//TOGGLE_AUTO_STANDBY
-	//GOSLEEP
-	//SET_LIGHTLEVEL 12345
-	//SET_LIGHTLEVEL_ACTUAL
-	//GET_LIGHTLEVEL
-	//SET_BRIGHTNESS 40 (values: 40-255)
-	//SET_BRIGHTNESS_AUTO
-	//RGB_ALL 255,255,255
-	//RGB_SEC1 255,255,255
-	//RGB_SEC3 255,255,255
-	//SET_COLORTEMP 2700
-	//SET_TESTMODE
-	//SET_DEBUGMODE
-	//TEST_TIME 12:30
-	//REFRESH
-	//LED_TEST
-	//VERSION
-	//SET_DEFAULTS
-	//TOGGLE_SEC1
-	//TOGGLE_SEC3
-	//GET_SERIAL
-	//GET_MEM_USAGE
-	//TOGGLE_SOFTTOUCH
-	//SET_COLORMODE_AUTO_DAYLIGHT
-	//SET_COLORMODE_AUTO_DAYLIGHT_WIFI  <-- not implemented
-	//SET_COLORMODE_AUTO_WEATHER  <-- not implemented
-	//SET_COLORMODE_MANUAL
-	//SET_BACKLIGHT_OFF
-	//SET_BACKLIGHT_ON -> Switch on to last saved state
-	//SET_BACKLIGHTMODE_DAYLIGHT
-	//SET_BACKLIGHTMODE_RAINBOW
-	//SET_BACKLIGHTMODE_MANUAL 255,255,255
-	//SET_BACKLIGHTMODE_FREEZE
-	//SET_MINUTES_DISPLAY_MODE 0 <-- ausgeschaltet
-	//SET_MINUTES_DISPLAY_MODE 1 <-- an den Kanten
-	//SET_MINUTES_DISPLAY_MODE 2 <-- an den Ecken
-	//SET_MINUTES_DISPLAY_COLOR 255,255,255
-	//SET_MINUTES_DISPLAY_COLOR_DAYLIGHT
-	//GET_CONFIG
-	//IMPORT_CONFIG val1,val2,val3,...
+
+	// SET_WIFI_CREDETIALS SSID,Password
+	// SET_MQTT_CONNECTION IP,Port
+	// SET_MQTT_CREDENTIALS Clientname,Username,Password
+	// SET_MQTT_SEND_TOPIC Topic
+	// TOGGLE_WIFI
+	// TOGGLE_MQTT
+	// TOGGLE_LEDS
+	// SET_BRIGHTNESS 40 (values: 40-255)
+	// SET_DEVICENAME NeuerName <- set the Wifi DNS name: http://devicename.local
+	// SET_DEBUGMODE
+	// VERSION
+	// SET_DEFAULTS
+	// GET_SERIAL
+	// GET_MEM_USAGE
+	// GET_CONFIG
+	// IMPORT_CONFIG val1,val2,val3,...
+	
 
 	if(!mode.equals("")){
 
-		if(mode.indexOf("SET_TIME") != -1){
-		//set actual time
-
-		//split command
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String timeString = mode.substring(spaceIndex + 1, secondSpaceIndex);
-
-		//split time string input
-		int timeIndex = timeString.indexOf(',');
-		int secondTimeIndex = timeString.indexOf(',', timeIndex + 1);
-		int thirdTimeIndex = timeString.indexOf(',', secondTimeIndex + 1);
-		int forthTimeIndex = timeString.indexOf(',', thirdTimeIndex + 1);
-		int fithTimeIndex = timeString.indexOf(',', forthTimeIndex + 1);
-
-		String s_year, s_month, s_day, s_hour, s_min, s_sec;
-
-		s_year = timeString.substring(0, timeIndex);
-		s_month = timeString.substring(timeIndex + 1, secondTimeIndex);
-		s_day = timeString.substring(secondTimeIndex + 1, thirdTimeIndex);
-		s_hour = timeString.substring(thirdTimeIndex + 1, forthTimeIndex);
-		s_min = timeString.substring(forthTimeIndex + 1, fithTimeIndex);
-		s_sec = timeString.substring(fithTimeIndex + 1);
-
-		rtc.adjust(DateTime(s_year.toInt(), s_month.toInt(), s_day.toInt(), s_hour.toInt(), s_min.toInt(), s_sec.toInt()));
-		//rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
-
-		Log_println("Zeit erfolgreich eingestellt.");
-
-		tmpFadeSetting = fadeInOut;
-		blNeedRefresh = true;
-		softRefresh();
-
-		//		Debug
-		//		Log_println(s_year);
-		//		Log_println(s_month);
-		//		Log_println(s_day);
-		//		Log_println(s_hour);
-		//		Log_println(s_min);
-		//		Log_println(s_sec);
-
-
-	}else if(mode.equals("GET_TIME")){
-		//get actual time
-		DateTime now = rtc.now();
-
-		Serial.print(now.day(), DEC);
-		Serial.print('/');
-		Serial.print(now.month(), DEC);
-		Serial.print('/');
-		Serial.print(now.year(), DEC);
-		Serial.print("--");
-		Serial.print(now.hour(), DEC);
-		Serial.print(':');
-		Serial.print(now.minute(), DEC);
-		Serial.print(':');
-		Serial.print(now.second(), DEC);
-		Serial.println();
-
-	}else if(mode.equals("GET_INTERNETTIME")){
-		//get actual internet time
-		if(timeSynced){
-			int hour_ntp, min_ntp, sec_ntp, day_ntp, mon_ntp, year_ntp;
-			getTimeNTP(hour_ntp, min_ntp, sec_ntp, day_ntp, mon_ntp, year_ntp);
-
-			Serial.print(day_ntp, DEC);
-			Serial.print('/');
-			Serial.print(mon_ntp, DEC);
-			Serial.print('/');
-			Serial.print(year_ntp, DEC);
-			Serial.print("--");
-			Serial.print(hour_ntp, DEC);
-			Serial.print(':');
-			Serial.print(min_ntp, DEC);
-			Serial.print(':');
-			Serial.print(sec_ntp, DEC);
-			Serial.println();
-		}
-		else Serial.println("Time not synchronized.");
-
-	}else if(mode.equals("TOGGLE_SUMMERTIME")){
-		//toggle marker for summertime with changing time
-		isSummertime = !isSummertime;
-
-		DateTime now = rtc.now();
-
-		if(isSummertime){
-			//change false -> true -> plus 1 hour
-			rtc.adjust(DateTime(now.year(), now.month(), now.day(), now.hour()+1, now.minute(), now.second()));
-		}else{
-			//change true -> false -> minus 1 hour
-			rtc.adjust(DateTime(now.year(), now.month(), now.day(), now.hour()-1, now.minute(), now.second()));
-		}
+		if(mode.equals("TOGGLE_WIFI")){
+		//toggle wifi functionality
+		wifiEnabled = !wifiEnabled;
+		mqttEnabled = false;
 
 		settings.begin("settings", false);
-		settings.putBool("isSummertime",isSummertime);
+		settings.putBool("wifiEnabled",wifiEnabled);
+		settings.putBool("mqttEnabled",mqttEnabled);
 		settings.end();
 
-		if(isSummertime) Log_println("Die Uhr wurde auf Sommerzeit umgestellt.");
-		else Log_println("Die Uhr wurde auf Winterzeit umgestellt.");
-
-		tmpFadeSetting = fadeInOut;
-		blNeedRefresh = true;
-		softRefresh();
-
-	}else if(mode.equals("TOGGLE_SUMMERTIME_MARKER")){
-		//toggle marker for summertime without changing time
-		isSummertime = !isSummertime;
-
-		settings.begin("settings", false);
-		settings.putBool("isSummertime",isSummertime);
-		settings.end();
-
-		if(isSummertime) Log_println("Die Sommerzeit ist nun eingeschaltet.");
-		else Log_println("Die Sommerzeit ist nun ausgeschaltet.");
-
-	}else if(mode.equals("GET_CONFIG")){
-		//get all variable values saved in flash
-		Serial.println(getConfig());
-
-	}else if(mode.indexOf("IMPORT_CONFIG") != -1){
-		//import configuration set
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String s_conf_str = mode.substring(spaceIndex + 1, secondSpaceIndex);
-
-		Log_println("Die Konfiguration wird gespeichert und die Uhr anschliessend neu gestartet.");
-
-		importConfig(s_conf_str);
-
-	}else if(mode.indexOf("SET_STANDBY") != -1){
-		//set standby mode
-		if(mode.equals("SET_STANDBY_JUS")){
-			standbyMode = "JUS";
-		}else if(mode.equals("SET_STANDBY_CHE")){
-			standbyMode = "CHE";
-		}else if(mode.equals("SET_STANDBY_XMASTREE")){
-			standbyMode = "XMASTREE";
-		}else if(mode.equals("SET_STANDBY_NULL")){
-			standbyMode = "NULL";
-		}else if(mode.equals("SET_STANDBY_OFF")){
-			standbyMode = "OFF";
-		}else if(mode.equals("SET_STANDBY_TWINKLE")){
-			standbyMode = "TWINKLE";
-		}
-
-		settings.begin("settings", false);
-		settings.putString("standbyMode", standbyMode);
-		settings.end();
-
-		Log_println("Standby mode erfolgreich eingestellt.");
-
-	}else if(mode.indexOf("SET_LIGHTLEVEL") != -1){
-		//set lightlevel for standby mode
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String s_lightval = mode.substring(spaceIndex + 1, secondSpaceIndex);
-
-		lightlevel = s_lightval.toInt();
-
-		settings.begin("settings", false);
-		settings.putInt("lightlevel", lightlevel);
-		settings.end();
-
-		Log_println("Lightlevel wurde eingestellt.");
-
-	}else if(mode.indexOf("SET_LIGHTLEVEL_ACTUAL") != -1){
-		//set lightlevel for standby mode to actual value
-
-		lightlevel = getLightSensorValue();
-
-		settings.begin("settings", false);
-		settings.putInt("lightlevel", lightlevel);
-		settings.end();
-
-		Log_println("Lightlevel wurde auf aktuelle Helligkeit eingestellt.");
-
-	}else if(mode.equals("SET_BRIGHTNESS_AUTO")){
-		//set auto brightness mode on
-		autoBrightness = true;
-		setAutoBrightness();
-		showStrip();
-
-		settings.begin("settings", false);
-		settings.putBool("autoBrightness", autoBrightness);
-		settings.end();
-
-		Log_println("Die automatische Helligkeitsanpassung ist eingeschaltet.");
-
-	}else if(mode.indexOf("SET_BRIGHTNESS") != -1){
-		//set brightness for scaling
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String s_brightness = mode.substring(spaceIndex + 1, secondSpaceIndex);
-
-		brightness = s_brightness.toInt();
-
-		autoBrightness = false;
-		showStrip();
-
-		//save to Flash
-		writeConfigToFlash();
-
-		//settings.begin("settings", false);
-		//settings.putInt("brightness", brightness);
-		//settings.putBool("autoBrightness", autoBrightness);
-		//settings.end();
-
-		Log_println("Die Helligkeit wurde eingestellt.");
-
-	}else if(mode.equals("GET_LIGHTLEVEL")){
-		//get actual light sensor value
-
-		Log_println((String)getLightSensorValue());
-
-	}else if(mode.indexOf("SET_LANGUAGE") != -1){
-		//set lightlevel for standby mode
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String lang = mode.substring(spaceIndex + 1, secondSpaceIndex);
-
-		clockLang = lang.toInt();
-
-		settings.begin("settings", false);
-		settings.putInt("clockLang", clockLang);
-		settings.end();
-
-		Log_println("Die Sprache wurde eingestellt.");
-
-	}else if(mode.equals("SET_DEBUGMODE")){
-		//set debugmode on/off
-		debugmode = !debugmode;
-
-		settings.begin("settings", false);
-		settings.putBool("debugmode", debugmode);
-		settings.end();
-
-		if(debugmode) Log_println("Der Debugmodus ist jetzt eingeschaltet.");
-		else Log_println("Der Debugmodus ist jetzt ausgeschaltet.");
-
-	}else if(mode.indexOf("RGB_ALL") != -1){
-		//set color
-
-		//all leds
-		colorSec1=false;
-		colorSec3=false;
-
-		colorMode = 0;
-
-		//split command
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String colorString = mode.substring(spaceIndex + 1, secondSpaceIndex);
-
-		//split color string input
-		int colorIndex = colorString.indexOf(',');
-		int secondColorIndex = colorString.indexOf(',', colorIndex + 1);
-
-		String s_red, s_green, s_blue;
-
-		s_red = colorString.substring(0, colorIndex);
-		s_green = colorString.substring(colorIndex + 1, secondColorIndex);
-		s_blue = colorString.substring(secondColorIndex+1);
-
-		rgbcolor[0] = s_red.toInt();
-		rgbcolor[1] = s_green.toInt();
-		rgbcolor[2] = s_blue.toInt();
-
-		rgbcolorSec1[0] = s_red.toInt();
-		rgbcolorSec1[1] = s_green.toInt();
-		rgbcolorSec1[2] = s_blue.toInt();
-
-		rgbcolorSec3[0] = s_red.toInt();
-		rgbcolorSec3[1] = s_green.toInt();
-		rgbcolorSec3[2] = s_blue.toInt();
-
-		//save to Flash
-		writeConfigToFlash();
-
-
-		Log_println("Die Farbe fuer den gesamten Bereich wurde eingestellt.");
-
-		//soft refresh without fade in/out
-		tmpFadeSetting = fadeInOut;
-		fadeInOut = false;
-		softRefresh();
-
-	}else if(mode.indexOf("RGB_SEC1") != -1){
-		//set color
-
-		//all leds
-		colorSec1=true;
-
-		colorMode = 0;
-
-		//split command
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String colorString = mode.substring(spaceIndex + 1, secondSpaceIndex);
-
-		//split color string input
-		int colorIndex = colorString.indexOf(',');
-		int secondColorIndex = colorString.indexOf(',', colorIndex + 1);
-
-		String s_red, s_green, s_blue;
-
-		s_red = colorString.substring(0, colorIndex);
-		s_green = colorString.substring(colorIndex + 1, secondColorIndex);
-		s_blue = colorString.substring(secondColorIndex+1);
-
-		rgbcolorSec1[0] = s_red.toInt();
-		rgbcolorSec1[1] = s_green.toInt();
-		rgbcolorSec1[2] = s_blue.toInt();
-
-		//save to Flash
-		writeConfigToFlash();
-
-
-		Log_println("Die Farbe fuer Section 1 wurde eingestellt.");
-
-		//soft refresh without fade in/out
-		tmpFadeSetting = fadeInOut;
-		fadeInOut = false;
-		softRefresh();
-
-	}else if(mode.indexOf("RGB_SEC3") != -1){
-		//set color
-
-		//all leds
-		colorSec3=true;
-
-		colorMode = 0;
-
-		//split command
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String colorString = mode.substring(spaceIndex + 1, secondSpaceIndex);
-
-		//split color string input
-		int colorIndex = colorString.indexOf(',');
-		int secondColorIndex = colorString.indexOf(',', colorIndex + 1);
-
-		String s_red, s_green, s_blue;
-
-		s_red = colorString.substring(0, colorIndex);
-		s_green = colorString.substring(colorIndex + 1, secondColorIndex);
-		s_blue = colorString.substring(secondColorIndex+1);
-
-		rgbcolorSec3[0] = s_red.toInt();
-		rgbcolorSec3[1] = s_green.toInt();
-		rgbcolorSec3[2] = s_blue.toInt();
-
-		//save to Flash
-		writeConfigToFlash();
-
-		Log_println("Die Farbe fuer Section 3 wurde eingestellt.");
-
-		//soft refresh without fade in/out
-		tmpFadeSetting = fadeInOut;
-		fadeInOut = false;
-		softRefresh();
-
-	}else if(mode.indexOf("TEST_TIME") != -1){
-		//set color
-
-		//split command
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String testString = mode.substring(spaceIndex + 1, secondSpaceIndex);
-
-		//split color string input
-		int testIndex = testString.indexOf(':');
-		int secondTestIndex = testString.indexOf(':', testIndex + 1);
-
-		String s_hour, s_min;
-
-		s_hour = testString.substring(0, testIndex);
-		s_min = testString.substring(testIndex+1,secondTestIndex);
-
-		int hour = s_hour.toInt();
-		int min = s_min.toInt();
-
-		//convert 12/24 hour mode
-		if(hour>12) hour = hour-12;
-
-		debugmode = true;
-
-		setLedMatrix(hour,min);
-
-	}else if(mode.equals("REFRESH")){
-		tmpFadeSetting = fadeInOut;
-		blNeedRefresh = true;
-		softRefresh();
-	}else if(mode.equals("LED_TEST")){
-		Log_println("Teste LEDs...");
-		testLedMatrix(rgbcolor[0], rgbcolor[1], rgbcolor[2]);
-	}else if(mode.indexOf("SET_COLORTEMP") != -1){
-		//set color temperature for all leds
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String s_colortemp = mode.substring(spaceIndex + 1, secondSpaceIndex);
-
-		int colortemp = s_colortemp.toInt();
-
-		//calculate color temperature
-		ledMatrixObj.calcColorTemp(colortemp);
-		if(debugmode) Log_println((String)ledMatrixObj.getTempRed()+","+(String)ledMatrixObj.getTempGreen()+";"+(String)ledMatrixObj.getTempBlue());
-
-		//set all colors to calculated temp
-		rgbcolor[0] = ledMatrixObj.getTempRed();
-		rgbcolor[1] = ledMatrixObj.getTempGreen();
-		rgbcolor[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec1[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec1[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec1[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec3[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec3[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec3[2] = ledMatrixObj.getTempBlue();
-
-		//reset color setting
-		colorMode = 0;
-		colorSec1 = false;
-		colorSec3 = false;
-
-		//save to Flash
-		writeConfigToFlash();
-
-		Log_println("Die Farbtemperatur wurde eingestellt.");
-
-		//soft refresh without fade in/out
-		tmpFadeSetting = fadeInOut;
-		fadeInOut = false;
-		softRefresh();
-	}else if(mode.equals("VERSION")){
-		//get actual firmware version
-
-		Log_println(String(SW_VERSION));
-
-	}else if(mode.equals("SET_DEFAULTS")){
-		setDefaults();
-		writeConfigToFlash();
-
-		//soft refresh without fade in/out
-		ledMatrixObj.clearMatrix();
-		saveMatrix(true);
-		clearLedPanel();
-		current_min = 0;
-		Log_println("Die Standardeinstellungen wurden wiederhergestellt.");
-	}else if(mode.equals("TOGGLE_SEC1")){
-		activateSec1 = !activateSec1;
-		ledMatrixObj.sec1Active = activateSec1;
-
-		//soft refresh without fade in/out
-		ledMatrixObj.clearMatrix();
-		saveMatrix(true);
-		clearLedPanel();
-		current_min = 0;
-
-		settings.begin("settings", false);
-		settings.putBool("activateSec1", activateSec1);
-		settings.end();
-
-		if(activateSec1) Log_println("Section 1 wurde eingeschaltet.");
-		else Log_println("Section 1 wurde ausgeschaltet..");
-	}else if(mode.equals("TOGGLE_SEC3")){
-		activateSec3 = !activateSec3;
-		ledMatrixObj.sec3Active = activateSec3;
-
-		//soft refresh without fade in/out
-		ledMatrixObj.clearMatrix();
-		saveMatrix(true);
-		clearLedPanel();
-		current_min = 0;
-
-		settings.begin("settings", false);
-		settings.putBool("activateSec3", activateSec3);
-		settings.end();
-
-		if(activateSec3) Log_println("Section 3 wurde eingeschaltet.");
-		else Log_println("Section 3 wurde ausgeschaltet..");
-	}else if(mode.equals("GET_SERIAL")){
-		Log_println(getWiFiKey(false));
-	}else if(mode.equals("GET_MEM_USAGE")){
-		//Get actual RAM usage
-		Log_println("Verfuegbarer RAM: " + String(ESP.getHeapSize() - ESP.getFreeHeap()) + " / " + String(ESP.getHeapSize()) + " Byte.");
-	}else if(mode.equals("SET_COLORMODE_AUTO_DAYLIGHT")){
-		//set colormode to auto color temp daylight
-		colorMode = 1;
-		setDaylightColor(hour_unconverted);
-		//soft refresh without fade in/out
-		tmpFadeSetting = fadeInOut;
-		fadeInOut = false;
-		softRefresh();
-
-		settings.begin("settings", false);
-		settings.putInt("colorMode", colorMode);
-		settings.end();
-
-		Log_println("Farbmodus ist nun Tageszeitabhaengig.");
-
-	}else if(mode.equals("SET_COLORMODE_MANUAL")){
-		//set colormode to manual coloring
-		colorMode = 0;
-
-		settings.begin("settings", false);
-		settings.putInt("colorMode", colorMode);
-		settings.end();
-		Log_println("Farbmodus ist manuell konfiguriert.");
-
-	}else if(mode.equals("TOGGLE_SOFTTOUCH")){
-		//turn on/off softtouch functionality
-		enableTouch = !enableTouch;
-
-		settings.begin("settings", false);
-		settings.putBool("enableTouch", enableTouch);
-		settings.end();
-
-		if(enableTouch) Log_println("Softtouch wurde eingeschaltet.");
-		else Log_println("Softtouch wurde ausgeschaltet.");
-	}else if(mode.equals("TOGGLE_AUTO_STANDBY")){
-		//turn on/off light-sensitive standby
-		enableAutoStandby = !enableAutoStandby;
-
-		//settings.begin("settings", false);
-		//settings.putBool("enableAutoStandby", enableAutoStandby);
-		//settings.end();
-
-		//save to flash
-		writeConfigToFlash();
-
-		if(enableAutoStandby) Log_println("Lichtabhaengiger Standby wurde eingeschaltet.");
-		else Log_println("Lichtabhaengiger Standby wurde ausgeschaltet.");
-	}else if(mode.equals("SET_BACKLIGHT_OFF")){
-		//turn on/off backlight functionality
-		enableBacklight = false;
-		if(displayMinutes>0){
-			//if BL is off -> direct control min display
-			clearBacklight();
-			setMinutesBL(convertMin(current_min_rtc));
-			FastLED.show();
-		}else clearBacklight();
-
-		settings.begin("settings", false);
-		settings.putBool("enableBacklight", enableBacklight);
-		settings.end();
-
-		Log_println("Das Backlight wurde ausgeschaltet.");
-	}else if(mode.equals("SET_BACKLIGHT_ON")){
-		//turn on/off backlight functionality
-		enableBacklight = true;
-		blNeedRefresh = true;
-
-		settings.begin("settings", false);
-		settings.putBool("enableBacklight", enableBacklight);
-		settings.end();
-
-		Log_println("Das Backlight wurde eingeschaltet.");
-	}else if(mode.indexOf("SET_BACKLIGHTMODE") != -1){
-		if(NUM_LEDS_BL==0){
-			Log_println("Funktion Backlight ist nur mit integriertem Hintergrundlicht verfuegbar.",1);
-		}else{
-
-			//set backlight mode
-			if(mode.equals("SET_BACKLIGHTMODE_DAYLIGHT")){
-				//switch to general daylight mode if not already set
-
-				if(colorMode != 1){
-					//set colormode to auto color temp daylight
-					colorMode = 1;
-					setDaylightColor(hour_unconverted);
-					//soft refresh without fade in/out
-					tmpFadeSetting = fadeInOut;
-					fadeInOut = false;
-					softRefresh();
-
-					settings.begin("settings", false);
-					settings.putInt("colorMode", colorMode);
-					settings.end();
-				}
-
-				backlightMode = "daylight";
-				blNeedRefresh = true;
-
-			}else if(mode.equals("SET_BACKLIGHTMODE_RAINBOW")){
-				backlightMode = "rainbow";
-				sat = 130;
-				val = 255;
-
-			}else if(mode.equals("SET_BACKLIGHTMODE_FREEZE")){
-				if(backlightMode.equals("daylight") || backlightMode.equals("rainbow")){
-					backlightMode = "manual";
-
-					blNeedRefresh = true;
-
-				}else Log_println("Die Farbe kann nur bei aktiviertem Auto-Daylight oder Rainbow Modus gespeichert werden.",1);
-
-			}else if(mode.indexOf("SET_BACKLIGHTMODE_MANUAL") != -1){
-				backlightMode = "manual";
-
-				//split command
-				int spaceIndex = mode.indexOf(' ');
-				int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-				String colorString = mode.substring(spaceIndex + 1, secondSpaceIndex);
-
-				//split color string input
-				int colorIndex = colorString.indexOf(',');
-				int secondColorIndex = colorString.indexOf(',', colorIndex + 1);
-
-				String s_red, s_green, s_blue;
-
-				s_red = colorString.substring(0, colorIndex);
-				s_green = colorString.substring(colorIndex + 1, secondColorIndex);
-				s_blue = colorString.substring(secondColorIndex+1);
-
-				rgbcolorBL[0] = s_red.toInt();
-				rgbcolorBL[1] = s_green.toInt();
-				rgbcolorBL[2] = s_blue.toInt();
-
-				blNeedRefresh = true;
-
-				//Log_println("Die Farbe fuer das Backlight wurde eingestellt.");
-
-			}
-
-			enableBacklight = true;
+		if(wifiEnabled) Log_println("WiFi ist nun eingeschaltet.");
+		else Log_println("WiFi ist nun ausgeschaltet.");
+
+		}else if(mode.equals("TOGGLE_MQTT")){
+			//toggle mqtt functionality
+			mqttEnabled = !mqttEnabled;
 
 			settings.begin("settings", false);
-			settings.putString("backlightMode", backlightMode);
-			settings.putBool("enableBacklight", enableBacklight);
-			settings.putInt("rgbcolorBL_1", rgbcolorBL[0]);
-			settings.putInt("rgbcolorBL_2", rgbcolorBL[1]);
-			settings.putInt("rgbcolorBL_3", rgbcolorBL[2]);
+			settings.putBool("mqttEnabled",mqttEnabled);
 			settings.end();
 
-			Log_println("Backlightmodus erfolgreich konfiguriert.");
-		}
+			if(mqttEnabled) Log_println("MQTT ist nun eingeschaltet.");
+			else Log_println("MQTT ist nun ausgeschaltet.");
 
-	}else if(mode.equals("TEST_BL")){
-		//test backlight
-		Log_println("Teste LEDs BL...");
-		//fill_solid(backlight,NUM_LEDS_BL,CRGB::Red);
-		fill_gradient(leds,NUM_LEDS-NUM_LEDS_BL,CHSV(220,80,255),NUM_LEDS-1,CHSV(220,80,255));
-		FastLED.show();
-		delay(2000);
-		fill_gradient(leds,NUM_LEDS-NUM_LEDS_BL,CHSV(0,0,0),NUM_LEDS-1,CHSV(0,0,0));
-		FastLED.show();
+		}else if(mode.equals("TOGGLE_LEDS")){
+			//toggle mqtt functionality
+			ledsEnabled = !ledsEnabled;
 
-	}else if(mode.equals("TEST_BL2")){
-		//test backlight
-		Log_println("Teste LEDs BL...");
-		testBLMatrix(rgbcolor[0], rgbcolor[1], rgbcolor[2]);
-	}else if(mode.equals("TEST_POWER")){
-		//test power consumption
-		Log_println("Stromaufnahmetest wird ausgefuehrt...");
-		testPower();
-		tmpFadeSetting = fadeInOut;
-		softRefresh();
-		//	}else if(mode.equals("GOSLEEP")){
-		//		//manual toggle standby
-		//		if(forceStandby) fadeInBL=true;
-		//		forceStandby = !forceStandby;
-	}else if(mode.equals("TOGGLE_TIMESYNCSTATE")){
-		//turn on/off network time sync functionality
-		enableTimeSync = !enableTimeSync;
+			settings.begin("settings", false);
+			settings.putBool("ledsEnabled",ledsEnabled);
+			settings.end();
 
-		settings.begin("settings", false);
-		settings.putBool("enableTimeSync", enableTimeSync);
-		settings.end();
+			if(ledsEnabled) Log_println("LEDs sind nun eingeschaltet.");
+			else Log_println("LEDs sind nun ausgeschaltet.");
 
-		if(enableTimeSync) Log_println("Zeitsynchronisation wurde eingeschaltet.");
-		else Log_println("Zeitsynchronisation wurde ausgeschaltet.");
-	}else if(mode.indexOf("SET_DEVICENAME") != -1){
-		//set lightlevel for standby mode
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String deviceName = mode.substring(spaceIndex + 1, secondSpaceIndex);
+		}else if(mode.equals("GET_CONFIG")){
+			//get all variable values saved in flash
+			Serial.println(getConfig());
 
-		if(!deviceName.equals("")){
-			netDevName = deviceName;
+		}else if(mode.indexOf("IMPORT_CONFIG") != -1){
+			//import configuration set
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			String s_conf_str = mode.substring(spaceIndex + 1, secondSpaceIndex);
 
+			Log_println("Die Konfiguration wird gespeichert und die Uhr anschliessend neu gestartet.");
+
+			importConfig(s_conf_str);
+
+		}else if(mode.indexOf("SET_BRIGHTNESS") != -1){
+			//set brightness for scaling
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			String s_brightness = mode.substring(spaceIndex + 1, secondSpaceIndex);
+
+			brightness = s_brightness.toInt();
+
+			showStrip();
+
+			//save to Flash
 			writeConfigToFlash();
 
-			Log_println("Der Geraetename wurde eingestellt auf '" + netDevName + "'. Neustart...");
+			//settings.begin("settings", false);
+			//settings.putInt("brightness", brightness);
+			//settings.putBool("autoBrightness", autoBrightness);
+			//settings.end();
 
-			//Softrestart
-			ESP.restart();
-		}
+			Log_println("Die Helligkeit wurde eingestellt.");
 
-	}else if(mode.indexOf("SET_MINUTES_DISPLAY_MODE") != -1){
-		//set mode for minutes display
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String s_displMode = mode.substring(spaceIndex + 1, secondSpaceIndex);
+		}else if(mode.equals("SET_DEBUGMODE")){
+			//set debugmode on/off
+			debugmode = !debugmode;
 
-		displayMinutes = s_displMode.toInt();
+			settings.begin("settings", false);
+			settings.putBool("debugmode", debugmode);
+			settings.end();
 
-		settings.begin("settings", false);
-		settings.putInt("displayMinutes", displayMinutes);
-		settings.end();
+			if(debugmode) Log_println("Der Debugmodus ist jetzt eingeschaltet.");
+			else Log_println("Der Debugmodus ist jetzt ausgeschaltet.");
 
-		//refresh BL if minutes display is on
-		if(enableBacklight){
-			blNeedRefresh = true;
-		}else if(displayMinutes>0 && !enableBacklight){
-			//if BL is off -> direct control min display
-			clearBacklight();
-			setMinutesBL(convertMin(current_min_rtc));
-			FastLED.show();
-		}else clearBacklight();
+		}else if(mode.indexOf("SET_WIFI_CREDETIALS") != -1){
+			// Set wifi access credentials
+			wifiEnabled = true;
 
-		if(displayMinutes>0) Log_println("Minutenanzeige wurde eingeschaltet.");
-		else Log_println("Minutenanzeige wurde ausgeschaltet.");
+			// Split command
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			String credString = mode.substring(spaceIndex + 1, secondSpaceIndex);
 
-	}else if(mode.equals("SET_MINUTES_DISPLAY_COLOR_DAYLIGHT")){
-		//set mode for minutes display color to automatic daylight
-		colormodeMin = 1;
+			// Split credential string input
+			int credIndex = credString.indexOf(',');
+			int secondCredIndex = credString.indexOf(',', credIndex + 1);
 
-		settings.begin("settings", false);
-		settings.putInt("colormodeMin", colormodeMin);
-		settings.end();
+			wifiSSID = credString.substring(0, credIndex);
+			wifiPassword = credString.substring(credIndex + 1, secondCredIndex);
 
-		//get color
-		setDaylightColorMin(hour_unconverted);
+			// Save to Flash
+			writeConfigToFlash();
 
-		//refresh BL if minutes display is on
-		if(displayMinutes>0 && enableBacklight){
-			blNeedRefresh = true;
-		}else if(displayMinutes>0 && !enableBacklight){
-			//if BL is off -> direct control min display
-			clearBacklight();
-			setMinutesBL(convertMin(current_min_rtc));
-			FastLED.show();
-		}else clearBacklight();
+			Log_println("Die Zugangsdaten fuer WiFi wurden eingestellt.");
 
-		Log_println("Die Minutenanzeige wurde auf autom. Tageslichtfarbe gestellt.");
+			softRefresh();
 
-	}else if(mode.indexOf("SET_MINUTES_DISPLAY_COLOR") != -1){
-		//set color of minute display
-		//split command
-		int spaceIndex = mode.indexOf(' ');
-		int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
-		String colorString = mode.substring(spaceIndex + 1, secondSpaceIndex);
+		}else if(mode.indexOf("SET_MQTT_CONNECTION") != -1){
+			// Set MQTT connection info
+			mqttEnabled = true;
 
-		//split color string input
-		int colorIndex = colorString.indexOf(',');
-		int secondColorIndex = colorString.indexOf(',', colorIndex + 1);
+			// Split command
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			String credString = mode.substring(spaceIndex + 1, secondSpaceIndex);
 
-		String s_red, s_green, s_blue;
+			// Split credential string input
+			int credIndex = credString.indexOf(',');
+			int secondCredIndex = credString.indexOf(',', credIndex + 1);
 
-		s_red = colorString.substring(0, colorIndex);
-		s_green = colorString.substring(colorIndex + 1, secondColorIndex);
-		s_blue = colorString.substring(secondColorIndex+1);
+			mqttIp = credString.substring(0, credIndex);
+			mqttPort = credString.substring(credIndex + 1, secondCredIndex).toInt();
 
-		rgbcolorMin[0] = s_red.toInt();
-		rgbcolorMin[1] = s_green.toInt();
-		rgbcolorMin[2] = s_blue.toInt();
+			// Save to Flash
+			writeConfigToFlash();
 
-		colormodeMin = 0;
+			Log_println("Die Verbindungsdaten des MQTT Brokers wurden eingestellt.");
 
-		//save to Flash
-		settings.begin("settings", false);
-		settings.putInt("rgbcolorMin_1", rgbcolorMin[0]);
-		settings.putInt("rgbcolorMin_2", rgbcolorMin[1]);
-		settings.putInt("rgbcolorMin_3", rgbcolorMin[2]);
-		settings.putInt("colormodeMin", colormodeMin);
-		settings.end();
+			softRefresh();
 
-		//refresh BL if minutes display is on
-		if(displayMinutes>0 && enableBacklight){
-			blNeedRefresh = true;
-		}else if(displayMinutes>0 && !enableBacklight){
-			//if BL is off -> direct control min display
-			clearBacklight();
-			setMinutesBL(convertMin(current_min_rtc));
-			FastLED.show();
-		}else clearBacklight();
+		}else if(mode.indexOf("SET_MQTT_CREDENTIALS") != -1){
+			// Set MQTT Broker credentials
+			mqttEnabled = true;
+			
+			// Split command
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			String credString = mode.substring(spaceIndex + 1, secondSpaceIndex);
 
-		Log_println("Die Farbe fuer die Minutenanzeige wurde eingestellt (manuell). Farbe: " + colorString);
+			// Split color string input
+			int credIndex = credString.indexOf(',');
+			int secondCredIndex = credString.indexOf(',', credIndex + 1);
 
-	}else if(mode.equals("TEST_MIN_EDGE")){
-		//test backlight
-		Log_println("Teste Minutenanzeige...");
-		//setPixel(115,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(116,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(117,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		//setPixel(118,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		FastLED.show();
-		delay(2000);
+			mqttClientName = credString.substring(0, credIndex);
+			mqttUserName = credString.substring(credIndex + 1, secondCredIndex);
+			mqttPassword = credString.substring(secondCredIndex+1);
 
-		//2 min after
-		//setPixel(122,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(123,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(124,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		//setPixel(125,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		FastLED.show();
-		delay(2000);
+			// Save to Flash
+			settings.begin("settings", false);
+			settings.putBool("mqttEnabled", mqttEnabled);
+			settings.putString("mqttClientName", mqttClientName);
+			settings.putString("mqttUserName", mqttUserName);
+			settings.putString("mqttPassword", mqttPassword);
+			settings.end();
 
-		//3 min after
-		//setPixel(129,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(130,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(131,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		//setPixel(132,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		FastLED.show();
-		delay(2000);
+			Log_println("Die Zugangsdaten des MQTT Brokers wurden eingestellt.");
 
-		//4 min after
-		//setPixel(110,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(111,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(136,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		//setPixel(137,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		FastLED.show();
-		delay(5000);
-		clearBacklight();
+			softRefresh();
 
-	}else if(mode.equals("TEST_MIN_MIDDLE")){
-		//test backlight
-		Log_println("Teste Minutenanzeige...");
-		setPixel(112,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(113,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(114,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		FastLED.show();
-		delay(2000);
-		//2 min after
-		setPixel(119,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(120,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(121,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		FastLED.show();
-		delay(2000);
-		//3 min after
-		setPixel(126,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(127,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(128,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		FastLED.show();
-		delay(2000);
-		//4 min after
-		setPixel(133,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(134,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-		setPixel(135,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
+		}else if(mode.indexOf("SET_MQTT_SEND_TOPIC") != -1){
+			// Set MQTT topic name for sending
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			mqttSendTopic = mode.substring(spaceIndex + 1, secondSpaceIndex);
 
-		FastLED.show();
-		delay(5000);
-		clearBacklight();
+			// Save to Flash
+			settings.begin("settings", false);
+			settings.putBool("mqttSendTopic", mqttEnabled);
+			settings.end();
+
+			Log_println("Das MQTT Topic zum Senden wurde eingestellt.");
+
+		}else if(mode.equals("VERSION")){
+			//get actual firmware version
+
+			Log_println(String(SW_VERSION));
+
+		}else if(mode.equals("SET_DEFAULTS")){
+			setDefaults();
+			writeConfigToFlash();
+			Log_println("Die Standardeinstellungen wurden wiederhergestellt.");
+		
+		}else if(mode.equals("GET_SERIAL")){
+			Log_println(getWiFiKey(false));
+		
+		}else if(mode.equals("GET_MEM_USAGE")){
+			//Get actual RAM usage
+			Log_println("Verfuegbarer RAM: " + String(ESP.getHeapSize() - ESP.getFreeHeap()) + " / " + String(ESP.getHeapSize()) + " Byte.");
+		
+		}else if(mode.indexOf("SET_DEVICENAME") != -1){
+			//set lightlevel for standby mode
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			String deviceName = mode.substring(spaceIndex + 1, secondSpaceIndex);
+
+			if(!deviceName.equals("")){
+				netDevName = deviceName;
+
+				writeConfigToFlash();
+
+				Log_println("Der Geraetename wurde eingestellt auf '" + netDevName + "'. Neustart...");
+
+				//Softrestart
+				ESP.restart();
+			}
 
 		}
 	}
-
-	
 
 
 	mode = "";
 }
 
-void controlBacklight(){
-	//control backlight
-	//if(enableBacklight && !firstCycle && !forceStandby && !standby && isInStandby && !blockBacklight){
-	if(enableBacklight && !forceStandby && !standby && !isInStandby && !blockBacklight){
-		if(backlightMode.equals("daylight") && blNeedRefresh){
-			CRGB rgb_val = CRGB(rgbcolor[0],rgbcolor[1],rgbcolor[2]);
-			CHSV hsv_val = rgb2hsv_approximate(rgb_val);
-
-			//store hsv values
-			hue_actual = hsv_val.h;
-			sat = hsv_val.s;
-			val = hsv_val.v;
-
-			//store rgb values
-			rgbcolorBL[0] = rgbcolor[0];
-			rgbcolorBL[1] = rgbcolor[1];
-			rgbcolorBL[2] = rgbcolor[2];
-
-			if(!firstCycle){
-				fill_gradient(leds,NUM_LEDS-NUM_LEDS_BL,hsv_val,NUM_LEDS-1,hsv_val);
-				if(displayMinutes>0) setMinutesBL(convertMin(current_min_rtc));
-				FastLED.show();
-			}
-
-			blNeedRefresh = false;
-
-		}else if(backlightMode.equals("rainbow")){
-			currentMillisBLTimer = millis();
-			if((unsigned long)(currentMillisBLTimer - previousMillisBLTimer) > 500){
-
-				if(!firstCycle){
-					fill_gradient(leds,NUM_LEDS-NUM_LEDS_BL,CHSV(hue_actual,sat,val),NUM_LEDS-1,CHSV(hue_actual,sat,val));
-					if(displayMinutes>0) setMinutesBL(convertMin(current_min_rtc));
-					FastLED.show();
-				}
-
-				if(hue_actual <= 255) hue_actual++;
-				else hue_actual--;
-
-				//convert and store rgb values
-				CRGB rgb_val;
-				hsv2rgb_rainbow(CHSV(hue_actual,sat,val), rgb_val);
-				rgbcolorBL[0] = rgb_val.r;
-				rgbcolorBL[1] = rgb_val.g;
-				rgbcolorBL[2] = rgb_val.b;
-
-				previousMillisBLTimer = currentMillisBLTimer;
-			}
-		}else if(backlightMode.equals("manual") && blNeedRefresh){
-			CRGB rgb_val = CRGB(rgbcolorBL[0],rgbcolorBL[1],rgbcolorBL[2]);
-			CHSV hsv_val = rgb2hsv_approximate(rgb_val);
-
-			//store hsv values
-			hue_actual = hsv_val.h;
-			sat = hsv_val.s;
-			val = hsv_val.v;
-
-			if(!firstCycle){
-				fill_gradient(leds,NUM_LEDS-NUM_LEDS_BL,hsv_val,NUM_LEDS-1,hsv_val);
-				if(displayMinutes>0) setMinutesBL(convertMin(current_min_rtc));
-				FastLED.show();
-			}
-
-			blNeedRefresh = false;
-
-		}
-
-	}
-}
-
 void setDefaults(){
-	standbyMode = "TWINKLE";
-	lightlevel = 10;
-
-	enableTouch = false;
-
 	debugmode = false;
-	debugmatrix = false;
 
-	rgbcolor[0] = 201;
-	rgbcolor[1] = 226;
-	rgbcolor[2] = 255;
-	rgbcolorSec1[0] = 201;
-	rgbcolorSec1[1] = 226;
-	rgbcolorSec1[2] = 255;
-	rgbcolorSec3[0] = 201;
-	rgbcolorSec3[1] = 226;
-	rgbcolorSec3[2] = 255;
-	rgbcolorMin[0] = 255;
-	rgbcolorMin[1] = 0;
-	rgbcolorMin[2] = 0;
 	brightness = 40;
-	autoBrightness = true;
-	enableAutoStandby = true;
-	fadeInOut = true;
-	colorSec1 = false;
-	colorSec3 = false;
-	colorMode = 1;
-	setDaylightColor(hour_unconverted);
 
-	clockLang = 0;
-
-	activateSec1 = true;
-	activateSec3 = true;
+	mqttEnabled = true;
+	mqttIp = "192.160.0.1";
+ 	mqttPort = 1883;
+	mqttSendTopic = "myroom";
+	mqttClientName = "ESP32Airquality";
+	mqttUserName = "";
+	mqttPassword = "";
 
 //	wifiSSID = "none";
 //	wifiPassword = "none";
 
-	netDevName = "wordclock";
-
-	enableBacklight = false;
-	backlightMode = "daylight";
-
-	displayMinutes = 0;
-	colormodeMin = 0;
-
-	isSummertime = true;
-
-	enableTimeSync = true;
+	netDevName = "airquality";
 
 	writeConfigToFlash();
 }
@@ -1472,7 +433,7 @@ void wifiStartAPmode(){
 	WiFi.softAP(wifi_config_SSID.c_str());
 
 	//Set DNS
-	if (!MDNS.begin("wordclock-config")) {
+	if (!MDNS.begin("airquality-config")) {
 		Log_println("Error setting up MDNS service.",2);
 		delay(500);
 	}else MDNS.addService("http", "tcp", 80);
@@ -1542,26 +503,23 @@ void wifiConnect(){
 			//Flash LEDs red if connection failed
 			clearLedPanel();
 			delay(400);
-			setPixel(52,220,20,20);
-			setPixel(35,220,20,20);
-			setPixel(55,220,20,20);
-			setPixel(54,220,20,20);
+			setPixel(0,220,20,20);
+			setPixel(1,220,20,20);
+			setPixel(2,220,20,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
 			delay(400);
-			setPixel(52,220,20,20);
-			setPixel(35,220,20,20);
-			setPixel(55,220,20,20);
-			setPixel(54,220,20,20);
+			setPixel(0,220,20,20);
+			setPixel(1,220,20,20);
+			setPixel(2,220,20,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
 			delay(400);
-			setPixel(52,220,20,20);
-			setPixel(35,220,20,20);
-			setPixel(55,220,20,20);
-			setPixel(54,220,20,20);
+			setPixel(0,220,20,20);
+			setPixel(1,220,20,20);
+			setPixel(2,220,20,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
@@ -1584,26 +542,23 @@ void wifiConnect(){
 			//Flash LEDs green if connected successful
 			clearLedPanel();
 			delay(400);
-			setPixel(52,20,220,20);
-			setPixel(35,20,220,20);
-			setPixel(55,20,220,20);
-			setPixel(54,20,220,20);
+			setPixel(0,20,220,20);
+			setPixel(1,20,220,20);
+			setPixel(2,20,220,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
 			delay(400);
-			setPixel(52,20,220,20);
-			setPixel(35,20,220,20);
-			setPixel(55,20,220,20);
-			setPixel(54,20,220,20);
+			setPixel(0,20,220,20);
+			setPixel(1,20,220,20);
+			setPixel(2,20,220,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
 			delay(400);
-			setPixel(52,20,220,20);
-			setPixel(35,20,220,20);
-			setPixel(55,20,220,20);
-			setPixel(54,20,220,20);
+			setPixel(0,20,220,20);
+			setPixel(1,20,220,20);
+			setPixel(2,20,220,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
@@ -1651,7 +606,7 @@ void wifiAPClientHandle()
 						client.println("</style></head>");
 
 						// the content of the HTTP response follows the header:
-						client.print("<h2>Wordclock mit WiFi Netz verbinden</h2>");
+						client.print("<h2>Airquality Monitor mit WiFi Netz verbinden</h2>");
 						client.print("Verbindungsdaten des Routers eingeben:<br><br>");
 						client.print("<form method='get' action='a'>");
 						client.print("<label>WiFi Name (SSID): </label><input name='ssid' length=32><br><br>");
@@ -1727,6 +682,7 @@ double getWifiSignalStrength(){
 }
 
 void wifiConnectedHandle(WiFiClient client){
+	/*
 	//Log_println("New Client.");
 	String currentLine = "";
 	bool execControlSwitch = false;
@@ -2412,42 +1368,8 @@ void wifiConnectedHandle(WiFiClient client){
 
 	//Log_println("Client disconnected.");
 	//Log_println("");
-}
 
-bool summertime_EU(int year, byte month, byte day, byte hour, byte tzHours)
-// European Daylight Savings Time calculation by "jurs" for German Arduino Forum
-// input parameters: "normal time" for year, month, day, hour and tzHours (0=UTC, 1=MEZ)
-// return value: returns true during Daylight Saving Time, false otherwise
-{
-  if (month<3 || month>10) return false; // no DST in Jan, Feb, Nov, Dez
-  if (month>3 && month<10) return true; // DST in Apr, Mai, Jun, Jul, Aug, Sep
-  if ((month==3 && (hour + 24 * day)>=(1 + tzHours + 24*(31 - (5 * year /4 + 4) % 7))) || (month==10 && (hour + 24 * day)<(1 + tzHours + 24*(31 - (5 * year /4 + 1) % 7))))
-    return true;
-  else
-    return false;
-}
-
-void getTimeNTP(int &hour, int &min, int &sec, int &day, int &month, int &year){
-	time_t now = time(nullptr);
-	struct tm * timeinfo = localtime(&now);
-
-	hour = timeinfo->tm_hour;
-	min = timeinfo->tm_min;
-	sec = timeinfo->tm_sec;
-	day = timeinfo->tm_mday;
-	month = timeinfo->tm_mon + 1;
-	year = timeinfo->tm_year + 1900;
-}
-
-int convertMin(int min){
-	if(min>=10){
-		min = min%10;
-	}
-
-	if(min<5){
-		return min;
-	}else return min-5;
-
+	*/
 }
 
 bool readConfigFromFlash(){
@@ -2456,58 +1378,21 @@ bool readConfigFromFlash(){
 	if(!settings.getBool("configStored", false)) return false;
 
 	//read all settings from Flash
-	standbyMode = settings.getString("standbyMode", "TWINKLE");
-	lightlevel = settings.getInt("lightlevel", 10);
-	clockLang = settings.getInt("clockLang", 0);
-	enableTouch = settings.getBool("enableTouch", false);
 
 	debugmode = settings.getBool("debugmode", false);
-	debugmatrix = settings.getBool("debugmatrix", false);
-
-	colorSec1 = settings.getBool("colorSec1", false);
-	colorSec3 = settings.getBool("colorSec3", false);
-	activateSec1 = settings.getBool("activateSec1", true);
-	activateSec3 = settings.getBool("activateSec3", true);
-	colorMode = settings.getInt("colorMode", 1);
-
-	rgbcolor[0] = settings.getInt("rgbcolor_1", 201);
-	rgbcolor[1] = settings.getInt("rgbcolor_2", 226);
-	rgbcolor[2] = settings.getInt("rgbcolor_3", 255);
-
-	rgbcolorBL[0] = settings.getInt("rgbcolorBL_1", 201);
-	rgbcolorBL[1] = settings.getInt("rgbcolorBL_2", 226);
-	rgbcolorBL[2] = settings.getInt("rgbcolorBL_3", 255);
-
-	rgbcolorSec1[0] = settings.getInt("rgbcolorSec1_1", 201);
-	rgbcolorSec1[1] = settings.getInt("rgbcolorSec1_2", 226);
-	rgbcolorSec1[2] = settings.getInt("rgbcolorSec1_3", 255);
-
-	rgbcolorSec3[0] = settings.getInt("rgbcolorSec3_1", 201);
-	rgbcolorSec3[1] = settings.getInt("rgbcolorSec3_2", 226);
-	rgbcolorSec3[2] = settings.getInt("rgbcolorSec3_3", 255);
-
+	
 	brightness = settings.getInt("brightness", 40);
-	autoBrightness = settings.getBool("autoBrightness", true);
 
-	fadeInOut = settings.getBool("fadeInOut", true);
+	netDevName = settings.getString("netDevName", "airquality");
 
-	enableBacklight = settings.getBool("enableBacklight", false);
-	//enableBacklight = false;
-	enableAutoStandby = settings.getBool("autoStandby", true);
-	backlightMode = settings.getString("backlightMode", "daylight");
-
-	isSummertime = settings.getBool("isSummertime", true);
-
-	enableTimeSync = settings.getBool("enableTimeSync", true);
-
-	netDevName = settings.getString("netDevName", "wordclock");
-
-	displayMinutes = settings.getInt("displayMinutes", 0);
-	colormodeMin = settings.getInt("colormodeMin", 0);
-	rgbcolorMin[0] = settings.getInt("rgbcolorMin_1", 255);
-	rgbcolorMin[1] = settings.getInt("rgbcolorMin_2", 0);
-	rgbcolorMin[2] = settings.getInt("rgbcolorMin_3", 0);
-
+	// MQTT settings
+	mqttEnabled = settings.getBool("mqttEnabled", true);
+	mqttIp = settings.getString("mqttIp", "192.160.0.1");
+ 	mqttPort = settings.getInt("brightness", 1883);
+	mqttSendTopic = settings.getString("mqttSendTopic", "myroom");
+	mqttClientName = settings.getString("mqttClientName", "ESP32Airquality");
+	mqttUserName = settings.getString("mqttUserName", "");
+	mqttPassword = settings.getString("mqttPassword", "");
 
 	settings.end();
 
@@ -2521,59 +1406,20 @@ bool readConfigFromFlash(){
 
 void writeConfigToFlash(){
 	settings.begin("settings", false);
-
-	settings.putString("standbyMode", standbyMode);
-	settings.putInt("lightlevel", lightlevel);
-	settings.putInt("clockLang", clockLang);
-	settings.putBool("enableTouch", enableTouch);
-
-	settings.putBool("debugmode", debugmode);
-	settings.putBool("debugmatrix", debugmatrix);
-
-	settings.putBool("colorSec1", colorSec1);
-	settings.putBool("colorSec3", colorSec3);
-	settings.putBool("activateSec1", activateSec1);
-	settings.putBool("activateSec3", activateSec3);
-	settings.putInt("colorMode", colorMode);
-
-	settings.putInt("rgbcolor_1", rgbcolor[0]);
-	settings.putInt("rgbcolor_2", rgbcolor[1]);
-	settings.putInt("rgbcolor_3", rgbcolor[2]);
-
-	settings.putInt("rgbcolorBL_1", rgbcolorBL[0]);
-	settings.putInt("rgbcolorBL_2", rgbcolorBL[1]);
-	settings.putInt("rgbcolorBL_3", rgbcolorBL[2]);
-
-	settings.putInt("rgbcolorSec1_1", rgbcolorSec1[0]);
-	settings.putInt("rgbcolorSec1_2", rgbcolorSec1[1]);
-	settings.putInt("rgbcolorSec1_3", rgbcolorSec1[2]);
-
-	settings.putInt("rgbcolorSec3_1", rgbcolorSec3[0]);
-	settings.putInt("rgbcolorSec3_2", rgbcolorSec3[1]);
-	settings.putInt("rgbcolorSec3_3", rgbcolorSec3[2]);
-
-	settings.putInt("brightness", brightness);
-	settings.putBool("autoBrightness", autoBrightness);
-
-	settings.putBool("fadeInOut", fadeInOut);
-
 	settings.putBool("configStored", true);
 
-	settings.putString("backlightMode", backlightMode);
-	settings.putBool("enableBacklight", enableBacklight);
-	settings.putBool("autoStandby", enableAutoStandby);
-
-	settings.putBool("isSummertime", isSummertime);
-
-	settings.putBool("enableTimeSync", enableTimeSync);
-
+	settings.putBool("debugmode", debugmode);
+	settings.putInt("brightness", brightness);
 	settings.putString("netDevName", netDevName);
 
-	settings.putInt("displayMinutes", displayMinutes);
-	settings.putInt("colormodeMin", colormodeMin);
-	settings.putInt("rgbcolorMin_1", rgbcolorMin[0]);
-	settings.putInt("rgbcolorMin_2", rgbcolorMin[1]);
-	settings.putInt("rgbcolorMin_3", rgbcolorMin[2]);
+	// MQTT settings
+	settings.putBool("mqttEnabled", mqttEnabled);
+	settings.putString("mqttIp", mqttIp);
+	settings.putInt("mqttPort", mqttPort);
+	settings.putString("mqttSendTopic", mqttSendTopic);
+	settings.putString("mqttClientName", mqttClientName);
+	settings.putString("mqttUserName", mqttUserName);
+	settings.putString("mqttPassword", mqttPassword);
 
 	settings.end();
 
@@ -2587,89 +1433,26 @@ String getConfig(){
 	String confTmp = "";
 
 	//1
-	confTmp += standbyMode;
+	confTmp += netDevName;
 	//2
-	confTmp += "," + String(lightlevel);
-	//3
-	confTmp += "," + String(clockLang);
-	//4
-	confTmp += "," + String(enableTouch);
-	//5
 	confTmp += "," + String(debugmode);
-	//6
-	confTmp += "," + String(debugmatrix);
-
-	//7
-	confTmp += "," + String(colorSec1);
-	//8
-	confTmp += "," + String(colorSec3);
-	//9
-	confTmp += "," + String(activateSec1);
-	//10
-	confTmp += "," + String(activateSec3);
-	//11
-	confTmp += "," + String(colorMode);
-
-	//12
-	confTmp += "," + String(rgbcolor[0]);
-	//13
-	confTmp += "," + String(rgbcolor[1]);
-	//14
-	confTmp += "," + String(rgbcolor[2]);
-
-	//15
-	confTmp += "," + String(rgbcolorBL[0]);
-	//16
-	confTmp += "," + String(rgbcolorBL[1]);
-	//17
-	confTmp += "," + String(rgbcolorBL[2]);
-
-	//18
-	confTmp += "," + String(rgbcolorSec1[0]);
-	//19
-	confTmp += "," + String(rgbcolorSec1[1]);
-	//20
-	confTmp += "," + String(rgbcolorSec1[2]);
-
-	//21
-	confTmp += "," + String(rgbcolorSec3[0]);
-	//22
-	confTmp += "," + String(rgbcolorSec3[1]);
-	//23
-	confTmp += "," + String(rgbcolorSec3[2]);
-
-	//24
+	//3
 	confTmp += "," + String(brightness);
-	//25
-	confTmp += "," + String(autoBrightness);
+	//4
+	confTmp += "," + String(mqttEnabled);
+	//5
+	confTmp += "," + mqttIp;
+	//6
+	confTmp += "," + String(mqttPort);
+	//7
+	confTmp += "," + mqttSendTopic;
+	//8
+	confTmp += "," + mqttClientName;
+	//9
+	confTmp += "," + mqttUserName;
+	//10
+	confTmp += "," + mqttPassword;
 
-	//26
-	confTmp += "," + String(fadeInOut);
-
-	//27
-	confTmp += "," + backlightMode;
-	//28
-	confTmp += "," + String(enableBacklight);
-	//29
-	confTmp += "," + String(enableAutoStandby);
-	//30
-	confTmp += "," + String(isSummertime);
-	//31
-	confTmp += "," + String(enableTimeSync);
-	//32
-	confTmp += "," + netDevName;
-	//33
-	confTmp += "," + String(displayMinutes);
-
-	//34
-	confTmp += "," + String(rgbcolorMin[0]);
-	//35
-	confTmp += "," + String(rgbcolorMin[1]);
-	//36
-	confTmp += "," + String(rgbcolorMin[2]);
-
-	//37
-	confTmp += "," + String(colormodeMin);
 	return confTmp;
 }
 
@@ -2687,47 +1470,12 @@ String getDebugData(){
 
 	logStr += "Communication sync errors: " + (String)commErrorCounter + "<br>";
 
-	DateTime now = rtc.now();
-
-	char actTime[120];
-
-	int Hour = now.hour();
-	int Minute = now.minute();
-	int Second= now.second();
-
-	sprintf(actTime, "%02d:%02d:%02d", Hour,Minute,Second);
-
-	logStr += "Actual hardware time: " + (String)actTime + "<br>";
-
-	char internetTime[120];
-	sprintf(internetTime, "-");
-
-	if(timeSynced){
-		int hour_ntp, min_ntp, sec_ntp, day_ntp, mon_ntp, year_ntp;
-		getTimeNTP(hour_ntp, min_ntp, sec_ntp, day_ntp, mon_ntp, year_ntp);
-		sprintf(internetTime, "%02d:%02d:%02d", hour_ntp,min_ntp,sec_ntp);
-	}
-
-	logStr += "Actual internet time: " + String(internetTime) + "<br>";
-
 	logStr += "WiFi related:<br>";
 
 	logStr += "IP: " + WiFi.localIP().toString() + "<br>";
 	logStr += "Signal strength: " + (String)(int)getWifiSignalStrength() + " %<br>";
 	logStr += "Network device name: " + netDevName + "<br>";
 	logStr += "--> Should be available via 'http://" + netDevName + ".local/'<br><br>";
-
-	logStr += "Matrix:<br><br>";
-
-	for(int k=9;k>=0;k--){
-		//rows
-		for(int l=0;l<11;l++){
-			//cols
-			logStr += (String)ledMatrixObj.ledMatrix[k][l] + " ";
-		}
-		logStr += " <-- Row " + String(k) + "<br>";
-	}
-	logStr += "<br><br>";
 
 	logStr += "~~~~ Complete Eventlog ~~~~<br><br>";
 	logStr += "<b>Note messages:</b><br>";
@@ -2756,165 +1504,61 @@ void importConfig(String confStr){
 	{
 		switch(argNum){
 		case 1:
-			//standby mode
-			standbyMode = stringPtr;
+			//netDevName
+			netDevName = stringPtr;
 			break;
 		case 2:
-			//lightlevel
-			lightlevel = ((String)stringPtr).toInt();
-			break;
-		case 3:
-			//clockLang
-			clockLang = ((String)stringPtr).toInt();
-			break;
-		case 4:
-			//enableTouch
-			if(((String)stringPtr).equals("1")) enableTouch = true;
-			else enableTouch = false;
-			break;
-		case 5:
 			//debugmode
 			if(((String)stringPtr).equals("1")) debugmode = true;
 			else debugmode = false;
 			break;
-		case 6:
-			//debugmatrix
-			if(((String)stringPtr).equals("1")) debugmatrix = true;
-			else debugmatrix = false;
-			break;
-		case 7:
-			//colorSec1
-			if(((String)stringPtr).equals("1")) colorSec1 = true;
-			else colorSec1 = false;
-			break;
-		case 8:
-			//colorSec3
-			if(((String)stringPtr).equals("1")) colorSec3 = true;
-			else colorSec3 = false;
-			break;
-		case 9:
-			//colorSec1
-			if(((String)stringPtr).equals("1")) activateSec1 = true;
-			else activateSec1 = false;
-			break;
-		case 10:
-			//colorSec3
-			if(((String)stringPtr).equals("1")) activateSec3 = true;
-			else activateSec3 = false;
-			break;
-		case 11:
-			//colorMode
-			colorMode = ((String)stringPtr).toInt();
-			break;
-		case 12:
-			//rgbcolor
-			rgbcolor[0] = ((String)stringPtr).toInt();
-			break;
-		case 13:
-			//rgbcolor
-			rgbcolor[1] = ((String)stringPtr).toInt();
-			break;
-		case 14:
-			//rgbcolor
-			rgbcolor[2] = ((String)stringPtr).toInt();
-			break;
-		case 15:
-			//rgbcolorBL
-			rgbcolorBL[0] = ((String)stringPtr).toInt();
-			break;
-		case 16:
-			//rgbcolorBL
-			rgbcolorBL[1] = ((String)stringPtr).toInt();
-			break;
-		case 17:
-			//rgbcolorBL
-			rgbcolorBL[2] = ((String)stringPtr).toInt();
-			break;
-		case 18:
-			//rgbcolorSec1
-			rgbcolorSec1[0] = ((String)stringPtr).toInt();
-			break;
-		case 19:
-			//rgbcolorSec1
-			rgbcolorSec1[1] = ((String)stringPtr).toInt();
-			break;
-		case 20:
-			//rgbcolorSec1
-			rgbcolorSec1[2] = ((String)stringPtr).toInt();
-			break;
-		case 21:
-			//rgbcolorSec3
-			rgbcolorSec1[0] = ((String)stringPtr).toInt();
-			break;
-		case 22:
-			//rgbcolorSec3
-			rgbcolorSec1[1] = ((String)stringPtr).toInt();
-			break;
-		case 23:
-			//rgbcolorSec3
-			rgbcolorSec1[2] = ((String)stringPtr).toInt();
-			break;
-		case 24:
+		case 3:
 			//brightness
 			brightness = ((String)stringPtr).toInt();
 			break;
-		case 25:
-			//autoBrightness
-			if(((String)stringPtr).equals("1")) autoBrightness = true;
-			else autoBrightness = false;
+		case 4:
+			//mqtt enabled
+			if(((String)stringPtr).equals("1")) mqttEnabled = true;
+			else mqttEnabled = false;
 			break;
-		case 26:
-			//fadeInOut
-			if(((String)stringPtr).equals("1")) fadeInOut = true;
-			else fadeInOut = false;
+		case 5:
+			//mqtt ip
+			mqttIp = stringPtr;
 			break;
-		case 27:
-			//backlight mode
-			backlightMode = stringPtr;
+		case 6:
+			//mqtt port
+			mqttPort = ((String)stringPtr).toInt();
 			break;
-		case 28:
-			//enable backlight
-			if(((String)stringPtr).equals("1")) enableBacklight = true;
-			else enableBacklight = false;
+		case 7:
+			//mqtt send topic
+			mqttSendTopic = stringPtr;
 			break;
-		case 29:
-			//enable auto standby
-			if(((String)stringPtr).equals("1")) enableAutoStandby = true;
-			else enableAutoStandby = false;
+		case 8:
+			//mqtt client name
+			mqttClientName = stringPtr;
 			break;
-		case 30:
-			//isSummertime
-			if(((String)stringPtr).equals("1")) isSummertime = true;
-			else isSummertime = false;
+		case 9:
+			//mqtt user name
+			mqttUserName = stringPtr;
 			break;
-		case 31:
-			//enableTimeSync
-			if(((String)stringPtr).equals("1")) enableTimeSync = true;
-			else enableTimeSync = false;
+		case 10:
+			//mqtt password
+			mqttPassword = stringPtr;
 			break;
-		case 32:
-			//netDevName
-			netDevName = stringPtr;
+		case 11:
+			//spare
 			break;
-		case 33:
-			//displayMinutes
-			displayMinutes = ((String)stringPtr).toInt();
+		case 12:
+			//spare
 			break;
-		case 34:
-			//rgbcolorMin
-			rgbcolorMin[0] = ((String)stringPtr).toInt();
+		case 13:
+			//spare
 			break;
-		case 35:
-			//rgbcolorMin
-			rgbcolorMin[1] = ((String)stringPtr).toInt();
+		case 14:
+			//spare
 			break;
-		case 36:
-			//rgbcolorMin
-			rgbcolorMin[2] = ((String)stringPtr).toInt();
-			break;
-		case 37:
-			//colormodeMin
-			colormodeMin = ((String)stringPtr).toInt();
+		case 15:
+			//spare
 			break;
 
 		}
@@ -2925,7 +1569,7 @@ void importConfig(String confStr){
 	}
 
 	//set number according to parameter
-	if(argNum != 30){
+	if(argNum != 10){
 		Log_println("Importing error: Wrong input format -> Number of parameters not correct.",2);
 		return;
 	}
@@ -3198,343 +1842,6 @@ void setLedMatrix(int hour, int min){
 
 }
 
-void setMinutesBL(int min){
-	//If mode=0 -> No display
-	if(displayMinutes==0) return;
-
-	if(displayMinutes==1){
-		//Middle
-		switch(min){
-		case 1:
-			//1 min after
-			setPixel(112,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(113,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(114,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 2:
-			//2 min after
-			setPixel(112,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(113,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(114,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(119,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(120,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(121,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 3:
-			//3 min after
-			setPixel(112,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(113,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(114,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(119,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(120,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(121,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(126,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(127,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(128,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 4:
-			//4 min after
-			setPixel(112,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(113,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(114,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(119,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(120,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(121,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(126,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(127,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(128,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(133,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(134,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(135,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		}
-
-	}else if(displayMinutes==2){
-		//Edges
-		switch(min){
-		case 1:
-			//1 min after
-			//setPixel(115,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(116,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(117,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			//setPixel(118,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 2:
-			//2 min after
-			//setPixel(122,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(116,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(117,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(123,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(124,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			//setPixel(125,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 3:
-			//3 min after
-			//setPixel(129,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(116,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(117,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(123,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(124,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(130,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(131,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			//setPixel(132,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 4:
-			//4 min after
-			//setPixel(110,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(116,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(117,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(123,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(124,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(130,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(131,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(111,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(136,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			//setPixel(137,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		}
-
-	}else if(displayMinutes==3){
-		//Middle only one side at once
-		switch(min){
-		case 1:
-			//1 min after
-			setPixel(112,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(113,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(114,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 2:
-			//2 min after
-			setPixel(119,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(120,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(121,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 3:
-			//3 min after
-			setPixel(126,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(127,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(128,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 4:
-			//4 min after
-			setPixel(133,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(134,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(135,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		}
-	}else if(displayMinutes==4){
-		//Edges only one side at once
-		switch(min){
-		case 1:
-			//1 min after
-			//setPixel(115,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(116,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(117,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			//setPixel(118,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 2:
-			//2 min after
-			//setPixel(122,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(123,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(124,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			//setPixel(125,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 3:
-			//3 min after
-			//setPixel(129,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(130,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(131,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			//setPixel(132,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		case 4:
-			//4 min after
-			//setPixel(110,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(111,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			setPixel(136,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			//setPixel(137,rgbcolorMin[0],rgbcolorMin[1],rgbcolorMin[2]);
-			break;
-		}
-	}
-}
-
-int getLightSensorValue(){
-	int photocellReading = analogRead(ldrPin);
-
-//	if (photocellReading < 10) {
-//		Log_println(" - Dunkel");
-//	} else if (photocellReading < 200) {
-//		Log_println(" - Halbdunkel/Daemmerung");
-//	} else if (photocellReading < 500) {
-//		Log_println(" - Hell");
-//	} else if (photocellReading < 800) {
-//		Log_println(" - Tageslicht");
-//	} else {
-//		Log_println(" - Sonnenlicht");
-//	}
-
-	return photocellReading;
-}
-
-void setAutoBrightness(){
-	int boundary = 300;
-	int sensorVal = getLightSensorValue();
-	if(sensorVal>=1500) sensorVal = 1500;
-	if(sensorVal < boundary) sensorVal = boundary;
-
-	brightness = map(sensorVal, boundary, 1500, 40, 220);
-}
-
-int readTouchSens()
-{
-	int out = (50 - touchRead(touchPin));
-	// change to adjust sensitivity as required
-	if (out > 10 ){
-		return (out + 2);
-	}
-	else{
-		return 0;
-	}
-}
-
-void setDaylightColor(int hour){
-	//set daytime dependent color temps
-	if(hour >= 0 && hour < 7){
-		//temp 2500K
-		ledMatrixObj.calcColorTemp(2500);
-		//set all colors to calculated temp
-		rgbcolor[0] = ledMatrixObj.getTempRed();
-		rgbcolor[1] = ledMatrixObj.getTempGreen();
-		rgbcolor[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec1[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec1[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec1[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec3[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec3[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec3[2] = ledMatrixObj.getTempBlue();
-		//refresh matrix if color has changed
-		if(previousDaytimeSection!=0) saveMatrix(true); //reset matrix
-		previousDaytimeSection = 0;
-
-	}else if(hour >= 7 && hour < 10){
-		//temp 3000K
-		ledMatrixObj.calcColorTemp(3000);
-		//set all colors to calculated temp
-		rgbcolor[0] = ledMatrixObj.getTempRed();
-		rgbcolor[1] = ledMatrixObj.getTempGreen();
-		rgbcolor[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec1[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec1[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec1[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec3[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec3[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec3[2] = ledMatrixObj.getTempBlue();
-		//refresh matrix if color has changed
-		if(previousDaytimeSection!=1) saveMatrix(true); //reset matrix
-		previousDaytimeSection = 1;
-
-	}else if(hour >= 10 && hour < 15){
-		//temp 6000K
-		ledMatrixObj.calcColorTemp(6000);
-		//set all colors to calculated temp
-		rgbcolor[0] = ledMatrixObj.getTempRed();
-		rgbcolor[1] = ledMatrixObj.getTempGreen();
-		rgbcolor[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec1[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec1[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec1[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec3[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec3[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec3[2] = ledMatrixObj.getTempBlue();
-		//refresh matrix if color has changed
-		if(previousDaytimeSection!=2) saveMatrix(true); //reset matrix
-		previousDaytimeSection = 2;
-
-	}else if(hour >= 15 && hour < 18){
-		//temp 3000K
-		ledMatrixObj.calcColorTemp(3000);
-		//set all colors to calculated temp
-		rgbcolor[0] = ledMatrixObj.getTempRed();
-		rgbcolor[1] = ledMatrixObj.getTempGreen();
-		rgbcolor[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec1[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec1[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec1[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec3[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec3[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec3[2] = ledMatrixObj.getTempBlue();
-		//refresh matrix if color has changed
-		if(previousDaytimeSection!=3) saveMatrix(true); //reset matrix
-		previousDaytimeSection = 3;
-
-	}else if((hour >= 18 && hour < 23) || hour < 7){
-		//temp 2500K
-		ledMatrixObj.calcColorTemp(2500);
-		//set all colors to calculated temp
-		rgbcolor[0] = ledMatrixObj.getTempRed();
-		rgbcolor[1] = ledMatrixObj.getTempGreen();
-		rgbcolor[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec1[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec1[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec1[2] = ledMatrixObj.getTempBlue();
-		rgbcolorSec3[0] = ledMatrixObj.getTempRed();
-		rgbcolorSec3[1] = ledMatrixObj.getTempGreen();
-		rgbcolorSec3[2] = ledMatrixObj.getTempBlue();
-		//refresh matrix if color has changed
-		if(previousDaytimeSection!=4) saveMatrix(true); //reset matrix
-		previousDaytimeSection = 4;
-
-	}
-
-	blNeedRefresh = true;
-}
-
-void setDaylightColorMin(int hour){
-	//set daytime dependent color temps
-	if(hour >= 0 && hour < 7){
-		//temp 2500K
-		ledMatrixObj.calcColorTemp(2500);
-		//set all colors to calculated temp
-		rgbcolorMin[0] = ledMatrixObj.getTempRed();
-		rgbcolorMin[1] = ledMatrixObj.getTempGreen();
-		rgbcolorMin[2] = ledMatrixObj.getTempBlue();
-
-	}else if(hour >= 7 && hour < 10){
-		//temp 3000K
-		ledMatrixObj.calcColorTemp(3000);
-		//set all colors to calculated temp
-		rgbcolorMin[0] = ledMatrixObj.getTempRed();
-		rgbcolorMin[1] = ledMatrixObj.getTempGreen();
-		rgbcolorMin[2] = ledMatrixObj.getTempBlue();
-
-	}else if(hour >= 10 && hour < 15){
-		//temp 6000K
-		ledMatrixObj.calcColorTemp(6000);
-		//set all colors to calculated temp
-		rgbcolorMin[0] = ledMatrixObj.getTempRed();
-		rgbcolorMin[1] = ledMatrixObj.getTempGreen();
-		rgbcolorMin[2] = ledMatrixObj.getTempBlue();
-
-	}else if(hour >= 15 && hour < 18){
-		//temp 3000K
-		ledMatrixObj.calcColorTemp(3000);
-		//set all colors to calculated temp
-		rgbcolorMin[0] = ledMatrixObj.getTempRed();
-		rgbcolorMin[1] = ledMatrixObj.getTempGreen();
-		rgbcolorMin[2] = ledMatrixObj.getTempBlue();
-
-	}else if((hour >= 18 && hour < 23) || hour < 7){
-		//temp 2500K
-		ledMatrixObj.calcColorTemp(2500);
-		//set all colors to calculated temp
-		rgbcolorMin[0] = ledMatrixObj.getTempRed();
-		rgbcolorMin[1] = ledMatrixObj.getTempGreen();
-		rgbcolorMin[2] = ledMatrixObj.getTempBlue();
-
-	}
-
-	blNeedRefresh = true;
-}
-
 //void setLedRow(int row, int array[]){
 //	memcpy(ledMatrix[row], array, sizeof(ledMatrix));
 //}
@@ -3555,535 +1862,10 @@ void showStrip() {
 	FastLED.show();
 }
 
-void saveMatrix(bool reset){
-	for(int i=0;i<10;i++){
-			//rows
-			for(int j=0;j<11;j++){
-				//Cols
-				if(reset) ledMatrixSaved[i][j]=-1;
-				else ledMatrixSaved[i][j]=ledMatrixObj.ledMatrix[i][j];
-			}
-		}
-}
-
-bool matrixChanges(){
-	for(int i=0;i<10;i++){
-			//rows
-			for(int j=0;j<11;j++){
-				//Cols
-				if(ledMatrixSaved[i][j] != ledMatrixObj.ledMatrix[i][j]) return true;
-			}
-		}
-	return false;
-}
-
-void fadeInChanges(int speed){
-	bool fade_BL = false;
-	if(fadeInBL) fade_BL = true;
-
-	//calc stepsize for color
-	float tmpRed = 0.0;
-	float tmpGreen = 0.0;
-	float tmpBlue = 0.0;
-	float stepRed = (float)rgbcolor[0]/100;
-	float stepGreen = (float)rgbcolor[1]/100;
-	float stepBlue = (float)rgbcolor[2]/100;
-
-	float tmpRedSec1 = 0.0;
-	float tmpGreenSec1 = 0.0;
-	float tmpBlueSec1 = 0.0;
-	float stepRedSec1 = (float)rgbcolorSec1[0]/100;
-	float stepGreenSec1 = (float)rgbcolorSec1[1]/100;
-	float stepBlueSec1 = (float)rgbcolorSec1[2]/100;
-
-	float tmpRedSec3 = 0.0;
-	float tmpGreenSec3 = 0.0;
-	float tmpBlueSec3 = 0.0;
-	float stepRedSec3 = (float)rgbcolorSec3[0]/100;
-	float stepGreenSec3 = (float)rgbcolorSec3[1]/100;
-	float stepBlueSec3 = (float)rgbcolorSec3[2]/100;
-
-	float tmpRedBL = 0.0, tmpGreenBL = 0.0, tmpBlueBL = 0.0, stepRedBL = 0.0, stepGreenBL = 0.0, stepBlueBL = 0.0, actRedBL = 0.0, actGreenBL = 0.0, actBlueBL = 0.0;
-
-	//Get colors of BL
-	if(enableBacklight && fade_BL){
-
-		CRGB rgb_val;
-		hsv2rgb_rainbow(CHSV(hue_actual,sat,val), rgb_val);
-		actRedBL = rgb_val.r;
-		actGreenBL = rgb_val.g;
-		actBlueBL = rgb_val.b;
-
-		stepRedBL = (float)rgb_val.r/100;
-		stepGreenBL = (float)rgb_val.g/100;
-		stepBlueBL = (float)rgb_val.b/100;
-	}
-
-
-	for(int k=0;k<100;k++){
-		//calc new color values
-		//subtract 0.5 to round down, casting to int truncates decimal places
-		if((tmpRed + stepRed)<rgbcolor[0]) tmpRed = tmpRed + stepRed;
-		else tmpRed=rgbcolor[0];
-
-		if((tmpGreen + stepGreen)<rgbcolor[1]) tmpGreen = tmpGreen + stepGreen;
-		else tmpGreen = rgbcolor[1];
-
-		if((tmpBlue + stepBlue)<rgbcolor[2]) tmpBlue = tmpBlue + stepBlue;
-		else tmpBlue = rgbcolor[2];
-
-		if(colorSec1){
-			if((tmpRedSec1 + stepRedSec1)<rgbcolorSec1[0]) tmpRedSec1 = tmpRedSec1 + stepRedSec1;
-			else tmpRedSec1=rgbcolorSec1[0];
-
-			if((tmpGreenSec1 + stepGreenSec1)<rgbcolorSec1[1]) tmpGreenSec1 = tmpGreenSec1 + stepGreenSec1;
-			else tmpGreenSec1 = rgbcolorSec1[1];
-
-			if((tmpBlueSec1 + stepBlueSec1)<rgbcolorSec1[2]) tmpBlueSec1 = tmpBlueSec1 + stepBlueSec1;
-			else tmpBlueSec1 = rgbcolorSec1[2];
-		}
-
-		if(colorSec3){
-			if((tmpRedSec3 + stepRedSec3)<rgbcolorSec3[0]) tmpRedSec3 = tmpRedSec3 + stepRedSec3;
-			else tmpRedSec3=rgbcolorSec3[0];
-
-			if((tmpGreenSec3 + stepGreenSec3)<rgbcolorSec3[1]) tmpGreenSec3 = tmpGreenSec3 + stepGreenSec3;
-			else tmpGreenSec3 = rgbcolorSec3[1];
-
-			if((tmpBlueSec3 + stepBlueSec3)<rgbcolorSec3[2]) tmpBlueSec3 = tmpBlueSec3 + stepBlueSec3;
-			else tmpBlueSec3 = rgbcolorSec3[2];
-		}
-
-		if(enableBacklight && fade_BL){
-			if((tmpRedBL + stepRedBL)<actRedBL) tmpRedBL = tmpRedBL + stepRedBL;
-			else tmpRedBL=actRedBL;
-
-			if((tmpGreenBL + stepGreenBL)<actGreenBL) tmpGreenBL = tmpGreenBL + stepGreenBL;
-			else tmpGreenBL = actGreenBL;
-
-			if((tmpBlueBL + stepBlueBL)<actBlueBL) tmpBlueBL = tmpBlueBL + stepBlueBL;
-			else tmpBlueBL = actBlueBL;
-		}
-
-
-		for(int i=0;i<10;i++){
-			//rows
-			for(int j=0;j<11;j++){
-				//Cols
-				if(ledMatrixSaved[i][j] != ledMatrixObj.ledMatrix[i][j] && ledMatrixObj.ledMatrix[i][j] != -1){
-					//If the matrix position is different AND not turned off in saved
-
-					//set new color to led
-					if(colorSec1 && inSec1(ledMatrixObj.ledMatrix[i][j])) setPixel(ledMatrixObj.ledMatrix[i][j], (int)tmpRedSec1, (int)tmpGreenSec1, (int)tmpBlueSec1);
-					else if(colorSec3 && inSec3(ledMatrixObj.ledMatrix[i][j])) setPixel(ledMatrixObj.ledMatrix[i][j], (int)tmpRedSec3, (int)tmpGreenSec3, (int)tmpBlueSec3);
-					else setPixel(ledMatrixObj.ledMatrix[i][j], (int)tmpRed, (int)tmpGreen, (int)tmpBlue);
-				}
-			}
-		}
-
-		//Fade in Backlight
-		if(enableBacklight && fade_BL){
-			fill_gradient_RGB(leds,NUM_LEDS-NUM_LEDS_BL,CRGB((int)tmpRedBL,(int)tmpGreenBL,(int)tmpBlueBL),NUM_LEDS-1,CRGB((int)tmpRedBL,(int)tmpGreenBL,(int)tmpBlueBL));
-		}
-
-		showStrip();
-		delay(speed);
-	}
-
-	//set remaining values to rgbcolor[]
-	//Backlight
-	if(enableBacklight && fade_BL){
-		fill_gradient_RGB(leds,NUM_LEDS-NUM_LEDS_BL,CHSV(hue_actual,sat,val),NUM_LEDS-1,CHSV(hue_actual,sat,val));
-	}
-
-	//Front
-	for(int l=0;l<10;l++){
-		//rows
-		for(int m=0;m<11;m++){
-			//Cols
-			if(ledMatrixSaved[l][m] != ledMatrixObj.ledMatrix[l][m] && ledMatrixObj.ledMatrix[l][m] != -1){
-				//If the matrix position is different AND not turned off in saved
-
-				//set new color to led
-				//setPixel(ledMatrixObj.ledMatrix[l][m], rgbcolor[0], rgbcolor[1], rgbcolor[2]);
-				if(colorSec1 && inSec1(ledMatrixObj.ledMatrix[l][m])) setPixel(ledMatrixObj.ledMatrix[l][m], rgbcolorSec1[0], rgbcolorSec1[1], rgbcolorSec1[2]);
-				else if(colorSec3 && inSec3(ledMatrixObj.ledMatrix[l][m])) setPixel(ledMatrixObj.ledMatrix[l][m], rgbcolorSec3[0], rgbcolorSec3[1], rgbcolorSec3[2]);
-				else setPixel(ledMatrixObj.ledMatrix[l][m], rgbcolor[0], rgbcolor[1], rgbcolor[2]);
-			}
-		}
-	}
-	fadeInBL = false;
-	blockBacklight = false;
-
-	showStrip();
-
-}
-
-void fadeOutChanges(int speed){
-	bool fade_BL = false;
-	if(fadeOutBL) fade_BL = true;
-
-
-	//calc stepsize for color
-	float tmpRed = (float)rgbcolor[0];
-	float tmpGreen = (float)rgbcolor[1];
-	float tmpBlue = (float)rgbcolor[2];
-	float stepRed = (float)rgbcolor[0]/100;
-	float stepGreen = (float)rgbcolor[1]/100;
-	float stepBlue = (float)rgbcolor[2]/100;
-
-	float tmpRedSec1 = (float)rgbcolorSec1[0];
-	float tmpGreenSec1 = (float)rgbcolorSec1[1];
-	float tmpBlueSec1 = (float)rgbcolorSec1[2];
-	float stepRedSec1 = (float)rgbcolorSec1[0]/100;
-	float stepGreenSec1 = (float)rgbcolorSec1[1]/100;
-	float stepBlueSec1 = (float)rgbcolorSec1[2]/100;
-
-	float tmpRedSec3 = (float)rgbcolorSec3[0];
-	float tmpGreenSec3 = (float)rgbcolorSec3[1];
-	float tmpBlueSec3 = (float)rgbcolorSec3[2];
-	float stepRedSec3 = (float)rgbcolorSec3[0]/100;
-	float stepGreenSec3 = (float)rgbcolorSec3[1]/100;
-	float stepBlueSec3 = (float)rgbcolorSec3[2]/100;
-
-	float tmpRedBL = 0.0, tmpGreenBL = 0.0, tmpBlueBL = 0.0, stepRedBL = 0.0, stepGreenBL = 0.0, stepBlueBL = 0.0;
-
-	//Get colors of BL
-	if(enableBacklight && fade_BL){
-
-		CRGB rgb_val;
-		hsv2rgb_rainbow(CHSV(hue_actual,sat,val), rgb_val);
-
-		tmpRedBL = (float)rgb_val.r;
-		tmpGreenBL = (float)rgb_val.g;
-		tmpBlueBL = (float)rgb_val.b;
-		stepRedBL = (float)rgb_val.r/100;
-		stepGreenBL = (float)rgb_val.g/100;
-		stepBlueBL = (float)rgb_val.b/100;
-	}
-
-	for(int k=0;k<100;k++){
-		//calc new color values
-		//add 0.5 to round up, casting to int truncates decimal places
-		if(tmpRed - stepRed>0) tmpRed = tmpRed - stepRed;
-		else tmpRed=0;
-
-		if(tmpGreen - stepGreen>0) tmpGreen = tmpGreen - stepGreen;
-		else tmpGreen = 0;
-
-		if(tmpBlue - stepBlue>0) tmpBlue = tmpBlue - stepBlue;
-		else tmpBlue = 0;
-
-		if(colorSec1){
-			if(tmpRedSec1 - stepRedSec1>0) tmpRedSec1 = tmpRedSec1 - stepRedSec1;
-			else tmpRedSec1=0;
-
-			if(tmpGreenSec1 - stepGreenSec1>0) tmpGreenSec1 = tmpGreenSec1 - stepGreenSec1;
-			else tmpGreenSec1 = 0;
-
-			if(tmpBlueSec1 - stepBlueSec1>0) tmpBlueSec1 = tmpBlueSec1 - stepBlueSec1;
-			else tmpBlueSec1 = 0;
-		}
-
-		if(colorSec3){
-			if(tmpRedSec3 - stepRedSec3>0) tmpRedSec3 = tmpRedSec3 - stepRedSec3;
-			else tmpRedSec3=0;
-
-			if(tmpGreenSec3 - stepGreenSec3>0) tmpGreenSec3 = tmpGreenSec3 - stepGreenSec3;
-			else tmpGreenSec3 = 0;
-
-			if(tmpBlueSec3 - stepBlueSec3>0) tmpBlueSec3 = tmpBlueSec3 - stepBlueSec3;
-			else tmpBlueSec3 = 0;
-		}
-
-		if(enableBacklight && fade_BL){
-			if(tmpRedBL - stepRedBL>0) tmpRedBL = tmpRedBL - stepRedBL;
-			else tmpRedBL=0;
-
-			if(tmpGreenBL - stepGreenBL>0) tmpGreenBL = tmpGreenBL - stepGreenBL;
-			else tmpGreenSec3 = 0;
-
-			if(tmpBlueBL - stepBlueBL>0) tmpBlueBL = tmpBlueBL - stepBlueBL;
-			else tmpBlueBL = 0;
-		}
-
-		for(int i=0;i<10;i++){
-			//rows
-			for(int j=0;j<11;j++){
-				//Cols
-				if((ledMatrixSaved[i][j] != ledMatrixObj.ledMatrix[i][j]) && (ledMatrixSaved[i][j] != -1) && !refreshed){
-					//If the matrix position is different AND not turned off in saved
-
-					//set new color to led
-					if(colorSec1 && inSec1(ledMatrixSaved[i][j])) setPixel(ledMatrixSaved[i][j], (int)tmpRedSec1, (int)tmpGreenSec1, (int)tmpBlueSec1);
-					else if(colorSec3 && inSec3(ledMatrixSaved[i][j])) setPixel(ledMatrixSaved[i][j], (int)tmpRedSec3, (int)tmpGreenSec3, (int)tmpBlueSec3);
-					else setPixel(ledMatrixSaved[i][j], (int)tmpRed, (int)tmpGreen, (int)tmpBlue);
-
-					//Auskommentiert seit 2.6.1
-					//Fade Backlight
-					//if(enableBacklight && fade_BL){
-					//	fill_gradient_RGB(leds,NUM_LEDS-NUM_LEDS_BL,CRGB((int)tmpRedBL,(int)tmpGreenBL,(int)tmpBlueBL),NUM_LEDS-1,CRGB((int)tmpRedBL,(int)tmpGreenBL,(int)tmpBlueBL));
-					//}
-
-				}
-				else if(refreshed && (ledMatrixSaved[i][j] != -1)){
-					//fade out if refreshed
-					if(colorSec1 && inSec1(ledMatrixSaved[i][j])) setPixel(ledMatrixSaved[i][j], (int)tmpRedSec1, (int)tmpGreenSec1, (int)tmpBlueSec1);
-					else if(colorSec3 && inSec3(ledMatrixSaved[i][j])) setPixel(ledMatrixSaved[i][j], (int)tmpRedSec3, (int)tmpGreenSec3, (int)tmpBlueSec3);
-					else setPixel(ledMatrixSaved[i][j], (int)tmpRed, (int)tmpGreen, (int)tmpBlue);
-				}
-			}
-		}
-
-		//Fade Backlight
-		if(!refreshed){
-			if(enableBacklight && fade_BL){
-				fill_gradient_RGB(leds,NUM_LEDS-NUM_LEDS_BL,CRGB((int)tmpRedBL,(int)tmpGreenBL,(int)tmpBlueBL),NUM_LEDS-1,CRGB((int)tmpRedBL,(int)tmpGreenBL,(int)tmpBlueBL));
-			}
-		}
-
-		fadeOutBL = false;
-
-		showStrip();
-		delay(speed);
-	}
-
-	//set remaining values to (0,0,0)
-	for(int l=0;l<10;l++){
-		//rows
-		for(int m=0;m<11;m++){
-			//Cols
-			if(ledMatrixSaved[l][m] != ledMatrixObj.ledMatrix[l][m] && ledMatrixSaved[l][m] != -1){
-				//If the matrix position is different AND not turned off in saved
-
-				//set new color to led
-				setPixel(ledMatrixSaved[l][m], 0, 0, 0);
-			}
-		}
-	}
-
-	//Backlight:
-	if(!refreshed){
-		if(enableBacklight && fade_BL){
-			fill_gradient_RGB(leds,NUM_LEDS-NUM_LEDS_BL,CRGB(0,0,0),NUM_LEDS-1,CRGB(0,0,0));
-		}
-	}
-
-	showStrip();
-}
-
-void refreshLedPanel(bool serialOutput){
-
-	if(fadeInOut){
-		//Fade in/out effect
-		//Fade out all changed LEDs to black (0,0,0)
-		if(!firstCycle) fadeOutChanges(20);
-		//change color if auto mode is on
-		if(colorMode == 1){
-			int hour = 0;
-			if(hour_unconverted>12) hour = hour_unconverted-12;
-			if(hour != current_hour){
-				setDaylightColor(hour_unconverted);
-				if(displayMinutes && colormodeMin==1) setDaylightColorMin(hour_unconverted);
-			}
-		}
-		if(refreshed) saveMatrix(true);
-		delay(100);
-		//Fade in all changed LEDs to rgbcolor[]
-		fadeInChanges(20);
-	}
-	else{
-		//Hard reset+update all LEDs
-		clearLedPanel();
-
-		//change color if auto mode is on
-		if(colorMode == 1){
-			int hour = 0;
-			if(hour_unconverted>12) hour = hour_unconverted-12;
-			if(hour != current_hour){
-				setDaylightColor(hour_unconverted);
-				if(displayMinutes && colormodeMin==1) setDaylightColorMin(hour_unconverted);
-			}
-		}
-		if(refreshed) saveMatrix(true);
-
-		//iterate through matrix
-		for(int i=0;i<10;i++){
-			//rows
-			for(int j=0;j<11;j++){
-				//Cols
-				//turn on LEDs
-				if(ledMatrixObj.ledMatrix[i][j]!=-1){
-					//Set color for led number
-					if(colorSec1 && inSec1(ledMatrixObj.ledMatrix[i][j])) setPixel(ledMatrixObj.ledMatrix[i][j], rgbcolorSec1[0], rgbcolorSec1[1], rgbcolorSec1[2]);
-					else if(colorSec3 && inSec3(ledMatrixObj.ledMatrix[i][j]))setPixel(ledMatrixObj.ledMatrix[i][j], rgbcolorSec3[0], rgbcolorSec3[1], rgbcolorSec3[2]);
-					else setPixel(ledMatrixObj.ledMatrix[i][j], rgbcolor[0], rgbcolor[1], rgbcolor[2]);
-				}
-			}
-		}
-
-		showStrip();
-	}
-
-
-	//Debug
-	//if(serialOutput){
-	//	for(int k=0;k<10;k++){
-			//rows
-	//		for(int l=0;l<11;l++){
-				//Cols
-	//			Serial.print((String)ledMatrixObj.ledMatrix[k][l] + " ");
-	//		}
-	//		Log_println("");
-			//m--;
-	//	}
-	//	Log_println("");
-	//}
-}
 
 void clearLedPanel(){
-	fill_solid(leds, NUM_LEDS-NUM_LEDS_BL, CRGB::Black);
+	fill_solid(leds, NUM_LEDS, CRGB::Black);
 	FastLED.show();
-}
-
-void clearBacklight(){
-	fill_gradient(leds,NUM_LEDS-NUM_LEDS_BL,CHSV(0,0,0),NUM_LEDS-1,CHSV(0,0,0));
-	FastLED.show();
-}
-
-bool inSec1(int led){
-	//define words for Sec1
-	int sec1Include [5] = {109,108,106,105,104};
-
-	for(int i=0;i<5;i++){
-		if(led==sec1Include[i]){
-			return true;
-		}
-	}
-	return false;
-}
-
-bool inSec3(int led){
-	//define words for Sec3
-	int sec3Include [3] = {8,9,10};
-
-	for(int i=0;i<3;i++){
-		if(led==sec3Include[i]){
-			return true;
-		}
-	}
-	return false;
-}
-
-void testLedMatrix(int red, int blue, int green){
-	//iterate through all leds in array
-	//while(true){
-		for(int i = 0; i < NUM_LEDS; i++ ) {
-			clearLedPanel();
-			setPixel(i, red, green, blue);
-			showStrip();
-			delay(600);
-		}
-		clearLedPanel();
-		showStrip();
-	//}
-
-}
-
-void testBLMatrix(int red, int blue, int green){
-	//iterate through all leds in array
-	//while(true){
-	for(int i = NUM_LEDS-NUM_LEDS_BL; i < NUM_LEDS; i++ ) {
-
-
-		leds[i].g = green;
-		leds[i].r = red;
-		leds[i].b = blue;
-
-		//FastLED.setBrightness(brightness);
-		FastLED.show();
-
-		delay(600);
-
-		leds[i].g = 0;
-		leds[i].r = 0;
-		leds[i].b = 0;
-
-		//FastLED.setBrightness(brightness);
-		FastLED.show();
-	}
-
-
-}
-
-void testPower(){
-	//Light up one character
-	clearLedPanel();
-	brightness = 40;
-	setPixel(109, 255, 255, 255);
-	showStrip();
-	delay(3000);
-	brightness = 130;
-	showStrip();
-	delay(3000);
-	brightness = 220;
-	showStrip();
-	delay(3000);
-
-	//Light up one line
-	clearLedPanel();
-	brightness = 40;
-	setPixel(109, 255, 255, 255);
-	setPixel(108, 255, 255, 255);
-	setPixel(107, 255, 255, 255);
-	setPixel(106, 255, 255, 255);
-	setPixel(105, 255, 255, 255);
-	setPixel(104, 255, 255, 255);
-	setPixel(103, 255, 255, 255);
-	setPixel(102, 255, 255, 255);
-	setPixel(101, 255, 255, 255);
-	setPixel(100, 255, 255, 255);
-	setPixel(99, 255, 255, 255);
-	showStrip();
-	delay(3000);
-	brightness = 130;
-	showStrip();
-	delay(3000);
-	brightness = 220;
-	showStrip();
-	delay(3000);
-
-	//Light up the whole panel w/o BL
-	clearLedPanel();
-	brightness = 40;
-	for(int i = 0; i < NUM_LEDS; i++ ) {
-		setPixel(i, 255, 255, 255);
-	}
-	showStrip();
-	delay(3000);
-	brightness = 130;
-	showStrip();
-	delay(3000);
-	brightness = 220;
-	showStrip();
-	delay(3000);
-
-	//Light up the whole panel with BL
-	if(enableBacklight){
-		brightness = 40;
-		fill_gradient_RGB(leds,NUM_LEDS-NUM_LEDS_BL,CRGB(255,255,255),NUM_LEDS-1,CRGB(255,255,255));
-		showStrip();
-		delay(3000);
-		brightness = 130;
-		showStrip();
-		delay(3000);
-		brightness = 220;
-		showStrip();
-		delay(3000);
-	}
-
-	clearLedPanel();
-
 }
 
 
@@ -4103,167 +1885,5 @@ unsigned int rand_interval(unsigned int min, unsigned int max)
     } while (r >= limit);
 
     return min + (r / buckets);
-}
-
-void standby_Twinkle(bool forced){
-	float tmpRed;
-	float tmpGreen;
-	float tmpBlue;
-	float stepRed;
-	float stepGreen;
-	float stepBlue;
-
-	bool stop = false;
-	bool lock = false;
-
-	int randomLED = 0;
-
-	unsigned long currentMillisTouch = millis();
-	unsigned long previousMillisTouch = currentMillisTouch;
-
-	while(true){
-		//calc random LED num
-		randomLED = rand_interval(0,109);
-
-		tmpRed = 0.0;
-		tmpGreen = 0.0;
-		tmpBlue = 0.0;
-		stepRed = (float)rgbcolor[0]/100;
-		stepGreen = (float)rgbcolor[1]/100;
-		stepBlue = (float)rgbcolor[2]/100;
-
-		//FADE IN
-		//-------
-		for(int k=0;k<100;k++){
-			//calc new color values
-			//subtract 0.5 to round down, casting to int truncates decimal places
-			if((tmpRed + stepRed)<rgbcolor[0]) tmpRed = tmpRed + stepRed;
-			else tmpRed=rgbcolor[0];
-
-			if((tmpGreen + stepGreen)<rgbcolor[1]) tmpGreen = tmpGreen + stepGreen;
-			else tmpGreen = rgbcolor[1];
-
-			if((tmpBlue + stepBlue)<rgbcolor[2]) tmpBlue = tmpBlue + stepBlue;
-			else tmpBlue = rgbcolor[2];
-
-
-			setPixel(randomLED, (int)tmpRed, (int)tmpGreen, (int)tmpBlue);
-
-			if(readTouchSens()>=30 && !lock){
-				//if sensor touched
-				previousMillisTouch = currentMillisTouch;
-				lock = true;
-			}
-
-			//WiFi -> Listen for incoming clients
-			client = server.available();
-
-			//Handle client if connected
-			if (client) wifiConnectedHandle(client);
-
-			if(mode.equals("GOWAKE")) stop = true;
-
-			currentMillisTouch = millis();
-
-			if((unsigned long)(currentMillisTouch - previousMillisTouch) >= 1000 && lock){
-				lock = false;
-			}
-
-			if(((unsigned long)(currentMillisTouch - previousMillisTouch) >= 200) && ((unsigned long)(currentMillisTouch - previousMillisTouch) <= 500) && (readTouchSens()>=30)){
-				stop = true;
-			}
-
-			showStrip();
-			delay(30);
-		}
-
-		setPixel(randomLED, rgbcolor[0], rgbcolor[1], rgbcolor[2]);
-
-		showStrip();
-
-		//FADE OUT
-		//--------
-		//calc stepsize for color
-		tmpRed = (float)rgbcolor[0];
-		tmpGreen = (float)rgbcolor[1];
-		tmpBlue = (float)rgbcolor[2];
-		stepRed = (float)rgbcolor[0]/100;
-		stepGreen = (float)rgbcolor[1]/100;
-		stepBlue = (float)rgbcolor[2]/100;
-
-		for(int k=0;k<100;k++){
-			//calc new color values
-			//add 0.5 to round up, casting to int truncates decimal places
-			if(tmpRed - stepRed>0) tmpRed = tmpRed - stepRed;
-			else tmpRed=0;
-
-			if(tmpGreen - stepGreen>0) tmpGreen = tmpGreen - stepGreen;
-			else tmpGreen = 0;
-
-			if(tmpBlue - stepBlue>0) tmpBlue = tmpBlue - stepBlue;
-			else tmpBlue = 0;
-
-			setPixel(randomLED, (int)tmpRed, (int)tmpGreen, (int)tmpBlue);
-
-			if(readTouchSens()>=30 && !lock && !stop){
-				//if sensor touched
-
-				previousMillisTouch = currentMillisTouch;
-
-				lock = true;
-			}
-
-			//WiFi -> Listen for incoming clients
-			client = server.available();
-
-			//Handle client if connected
-			if (client) wifiConnectedHandle(client);
-
-			if(mode.equals("GOWAKE")) stop = true;
-
-
-			currentMillisTouch = millis();
-
-			if((unsigned long)(currentMillisTouch - previousMillisTouch) >= 1000 && !stop && lock){
-				lock = false;
-			}
-
-			if(((unsigned long)(currentMillisTouch - previousMillisTouch) >= 200) && ((unsigned long)(currentMillisTouch - previousMillisTouch) <= 500) && (readTouchSens()>=30) && !stop){
-				stop = true;
-			}
-
-			showStrip();
-			delay(30);
-		}
-
-
-
-		//set remaining values to (0,0,0)
-		for(int l=0;l<10;l++){
-			//rows
-			for(int m=0;m<11;m++){
-				//Cols
-				//set new color to led
-				setPixel(ledMatrixSaved[l][m], 0, 0, 0);
-			}
-		}
-		showStrip();
-
-		if(getLightSensorValue()>lightlevel && !forced){
-			standby=false;
-			blockBacklight = true;
-			break;
-		}
-		else if(stop && forced){
-			forceStandby = false;
-			blockBacklight = true;
-			if(isInPresentationMode){
-				isInPresentationMode = false;
-				standbyMode = standbyModeSaved;
-			}
-			break;
-		}
-
-	}
 }
 
