@@ -3,7 +3,6 @@
 #include "Preferences.h"
 #include "WiFi.h"
 #include "ESPmDNS.h"
-#include "LEDMatrix.h"
 #include "EventLog.h"
 
 //FastLED settings
@@ -83,10 +82,8 @@ int cycleCounter = 0;
 
 //Functions
 void controlSwitch();
-void setPixel(int Pixel, int red, int green, int blue);
-void setLedMatrix(int hour, int min);
+void setPixelRgb(int Pixel, int red, int green, int blue);
 void showStrip();
-void softRefresh();
 void setDefaults();
 String getWiFiKey(bool keyTypeShort); //keyTypeShort=true -> first+last two digits, otherwise -> complete
 String getConfig();
@@ -127,9 +124,9 @@ void setup()
 	else writeConfigToFlash();
 
 	//Light all 3 LEDs in a color to signal boot process
-	setPixel(0,40,115,255);
-	setPixel(1,40,115,255);
-	setPixel(2,40,115,255);
+	setPixelRgb(0,40,115,255);
+	setPixelRgb(1,40,115,255);
+	setPixelRgb(2,40,115,255);
 	showStrip();
 	delay(200);
 	Log_println("Ready for Wifi!");
@@ -281,8 +278,6 @@ void controlSwitch(){
 
 			Log_println("Die Zugangsdaten fuer WiFi wurden eingestellt.");
 
-			softRefresh();
-
 		}else if(mode.indexOf("SET_MQTT_CONNECTION") != -1){
 			// Set MQTT connection info
 			mqttEnabled = true;
@@ -303,8 +298,6 @@ void controlSwitch(){
 			writeConfigToFlash();
 
 			Log_println("Die Verbindungsdaten des MQTT Brokers wurden eingestellt.");
-
-			softRefresh();
 
 		}else if(mode.indexOf("SET_MQTT_CREDENTIALS") != -1){
 			// Set MQTT Broker credentials
@@ -332,8 +325,6 @@ void controlSwitch(){
 			settings.end();
 
 			Log_println("Die Zugangsdaten des MQTT Brokers wurden eingestellt.");
-
-			softRefresh();
 
 		}else if(mode.indexOf("SET_MQTT_SEND_TOPIC") != -1){
 			// Set MQTT topic name for sending
@@ -503,23 +494,23 @@ void wifiConnect(){
 			//Flash LEDs red if connection failed
 			clearLedPanel();
 			delay(400);
-			setPixel(0,220,20,20);
-			setPixel(1,220,20,20);
-			setPixel(2,220,20,20);
+			setPixelRgb(0,220,20,20);
+			setPixelRgb(1,220,20,20);
+			setPixelRgb(2,220,20,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
 			delay(400);
-			setPixel(0,220,20,20);
-			setPixel(1,220,20,20);
-			setPixel(2,220,20,20);
+			setPixelRgb(0,220,20,20);
+			setPixelRgb(1,220,20,20);
+			setPixelRgb(2,220,20,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
 			delay(400);
-			setPixel(0,220,20,20);
-			setPixel(1,220,20,20);
-			setPixel(2,220,20,20);
+			setPixelRgb(0,220,20,20);
+			setPixelRgb(1,220,20,20);
+			setPixelRgb(2,220,20,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
@@ -542,23 +533,23 @@ void wifiConnect(){
 			//Flash LEDs green if connected successful
 			clearLedPanel();
 			delay(400);
-			setPixel(0,20,220,20);
-			setPixel(1,20,220,20);
-			setPixel(2,20,220,20);
+			setPixelRgb(0,20,220,20);
+			setPixelRgb(1,20,220,20);
+			setPixelRgb(2,20,220,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
 			delay(400);
-			setPixel(0,20,220,20);
-			setPixel(1,20,220,20);
-			setPixel(2,20,220,20);
+			setPixelRgb(0,20,220,20);
+			setPixelRgb(1,20,220,20);
+			setPixelRgb(2,20,220,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
 			delay(400);
-			setPixel(0,20,220,20);
-			setPixel(1,20,220,20);
-			setPixel(2,20,220,20);
+			setPixelRgb(0,20,220,20);
+			setPixelRgb(1,20,220,20);
+			setPixelRgb(2,20,220,20);
 			showStrip();
 			delay(400);
 			clearLedPanel();
@@ -1597,258 +1588,21 @@ void loop()
 	//execute switch for control options
 	if(!mode.equals("")) controlSwitch();
 
-
-	//execute backlight control sequence
-	controlBacklight();
-
-	//Check time interval
+	// Example for interval/timer check
+	/*
 	unsigned long currentMillis = millis();
-
 	if (((unsigned long)(currentMillis - previousMillis) >= refresh_interval)) {
 
-		//Check touch sensor if enabled
-		if(enableTouch && !firstCycle){
-			if(readTouchSens()>=30){
-				//if sensor touched
-				//wait for second touch
-				unsigned long currentMillisTouch = millis();
-				unsigned long previousMillisTouch = currentMillisTouch;
-				delay(100);
-				while((unsigned long)(currentMillisTouch - previousMillisTouch) <= 500){
-					if(readTouchSens()>=30){
-						if(forceStandby) fadeInBL=true;
-						forceStandby = !forceStandby;
-						//Log_println((String)readTouchSens());
-						currentMillisTouch=0;
-						previousMillisTouch=0;
-						if(forceStandby) Log_println("Wechsel in Modus Standby (manuell).");
-						else Log_println("Wechsel in Modus Betrieb (manuell).");
-						break;
-					}
-					currentMillisTouch = millis();
-				}
-			}
-		}
-
-		//Set standby-variable according to lightlevel and mode
-		if(getLightSensorValue()>lightlevel && (getLightSensorValue()>(lastStandbyValue+5))){
-			if(standby) Log_println("Wechsel in Modus Betrieb (automatisch).");
-			standby=false;
-			lastStandbyValue = 0;
-		}else if(getLightSensorValue()<lightlevel && enableAutoStandby){
-			if(!standby) Log_println("Wechsel in Modus Standby (automatisch).");
-			standby=true;
-		}
-
-		//Map brightness value to sensor value
-		if(autoBrightness){
-			setAutoBrightness();
-			if(abs(brightness-lastBrightnessChange)>=40){
-				lastBrightnessChange = brightness;
-				showStrip();
-			}
-
-		}
-
-		//check if standby is active
-		if((standby && (standbyMode.equals("JUS")||standbyMode.equals("CHE")||standbyMode.equals("NULL")||standbyMode.equals("TWINKLE")||standbyMode.equals("XMASTREE"))) || forceStandby){
-			if(standbyMode.equals("JUS") && isInStandby==false){
-				fadeOutBL = true;
-				ledMatrixObj.setStandby("JUS");
-
-				//turn off minutes display if BL is off -> turn off all BL leds
-				if(!enableBacklight && displayMinutes) clearBacklight();
-
-				refreshLedPanel(debugmatrix);
-				//save actual matrix
-				saveMatrix(false);
-				isInStandby=true;
-				lastStandbyValue = getLightSensorValue();
-				fadeInBL = true;
-			}
-			else if(standbyMode.equals("CHE") && isInStandby==false){
-				fadeOutBL = true;
-				ledMatrixObj.setStandby("CHE");
-
-				//turn off minutes display if BL is off -> turn off all BL leds
-				if(!enableBacklight && displayMinutes) clearBacklight();
-
-				refreshLedPanel(debugmatrix);
-				//save actual matrix
-				saveMatrix(false);
-				isInStandby=true;
-				lastStandbyValue = getLightSensorValue();
-				fadeInBL = true;
-			}else if(standbyMode.equals("XMASTREE") && isInStandby==false){
-				fadeOutBL = true;
-				ledMatrixObj.setStandby("XMASTREE");
-
-				//turn off minutes display if BL is off -> turn off all BL leds
-				if(!enableBacklight && displayMinutes) clearBacklight();
-
-				refreshLedPanel(debugmatrix);
-				//save actual matrix
-				saveMatrix(false);
-				isInStandby=true;
-				lastStandbyValue = getLightSensorValue();
-				fadeInBL = true;
-			}
-			else if(standbyMode.equals("NULL") && isInStandby==false){
-				fadeOutBL = true;
-				ledMatrixObj.setStandby("NULL");
-
-				//turn off minutes display if BL is off -> turn off all BL leds
-				if(!enableBacklight && displayMinutes) clearBacklight();
-
-				refreshLedPanel(debugmatrix);
-				//save actual matrix
-				saveMatrix(false);
-				isInStandby=true;
-				lastStandbyValue = getLightSensorValue();
-				fadeInBL = true;
-			}
-			else if(standbyMode.equals("TWINKLE") && isInStandby==false){
-				fadeOutBL = true;
-				ledMatrixObj.setStandby("NULL");
-
-				//turn off minutes display if BL is off -> turn off all BL leds
-				if(!enableBacklight && displayMinutes) clearBacklight();
-
-				refreshLedPanel(debugmatrix);
-
-				isInStandby=true;
-				lastStandbyValue = getLightSensorValue();
-				//change to standby twinkle mode if not touched
-//				if(!forceStandby){
-//					//reset matrix
-//					saveMatrix(true);
-//					standby_Twinkle();
-//					fadeInBL = true;
-//				}else saveMatrix(false); //save matrix
-
-				if(!forceStandby) saveMatrix(true);
-				else saveMatrix(false);
-				standby_Twinkle(forceStandby);
-				fadeInBL = true;
-			}
-		}else {
-			//get actual time
-			DateTime now = rtc.now();
-			int hour = now.hour();
-			hour_unconverted = now.hour();
-			current_min_rtc = now.minute();
-
-			//check communication
-			if(hour>24 || hour<0){
-				commErrorCounter++;
-				Log_println("Communication error with DS3231. Try to restart i2c bus...",2);
-
-				//restart i2c RTC comm
-				rtc.begin();
-				delay(500);
-				return;
-			}
-
-			//convert 12/24 hour mode
-			if(hour>12) hour = hour-12;
-
-			if(current_min!=current_min_rtc || isInStandby){
-
-				//check time setting after at least 2 minutes
-				if(!firstCycle && !timeSynced && cycleCounter>2){
-					if(!timeSyncFail){
-						timeSynced = true;
-
-						int hour_ntp, min_ntp, sec_ntp, day_ntp, mon_ntp, year_ntp;
-						getTimeNTP(hour_ntp, min_ntp, sec_ntp, day_ntp, mon_ntp, year_ntp);
-
-						//check time
-						if(year_ntp>=2019){
-							DateTime now = rtc.now();
-							if(now.hour() != hour_ntp || now.minute() != min_ntp){
-								//If time is not correct, adjust
-								Log_println("Checking time -> Not correct. Setting to synchronized NTP time...",1);
-								rtc.adjust(DateTime(year_ntp, mon_ntp, day_ntp, hour_ntp, min_ntp, sec_ntp));
-								//rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
-								delay(500);
-							}else Log_println("Checking time -> Correct.");
-						}else{
-							Log_println("Synchronized time not plausible.",1);
-							timeSynced=false;
-							timeSyncFail=true;
-						}
-					}
-				}
-				if(cycleCounter<=3) cycleCounter++;
-
-				//refresh led matrix
-				current_min = current_min_rtc;
-
-				//refresh BL if minutes display is on
-				if(displayMinutes>0 && enableBacklight){
-					if(convertMin(current_min_rtc)==0 || firstCycle){
-						//refresh BL before matrix if matrix changed
-						blNeedRefresh = true;
-						controlBacklight();
-					}else blNeedRefresh = true;
-				}else if(displayMinutes>0 && !enableBacklight){
-					//if BL is off -> direct control min display
-					if(convertMin(current_min_rtc)!=0 || firstCycle){
-						if(displayMinutes>2) clearBacklight();
-						setMinutesBL(convertMin(current_min_rtc));
-						FastLED.show();
-					}
-					else clearBacklight();
-				}
-
-				//set current time to matrix
-				setLedMatrix(hour,current_min_rtc);
-				if(current_hour!=hour) current_hour = hour;
-				isInStandby=false;
-				if(isInPresentationMode){
-					isInPresentationMode = false;
-					standbyMode = standbyModeSaved;
-				}
-				if(firstCycle) firstCycle = false;
-
-			}
-		}
-
+		// Things TODO
 		previousMillis = currentMillis;
 	}
+	*/
 }
 
-void softRefresh(){
-	//debugmode = true;
-	refreshed=true;
-	current_min = 0;
-	current_hour = 0;
-}
 
-void setLedMatrix(int hour, int min){
-
-	ledMatrixObj.setTime(hour, min, debugmode);
-
-	//if(debugmode) Log_println(ledMatrixObj.getDebug());
-
-	//Compare Matrices and only refresh if different
-	if(matrixChanges()||refreshed){
-		refreshLedPanel(debugmatrix);
-		//save actual matrix
-		saveMatrix(false);
-		if(refreshed) fadeInOut = tmpFadeSetting;
-		refreshed=false;
-	}
-
-}
-
-//void setLedRow(int row, int array[]){
-//	memcpy(ledMatrix[row], array, sizeof(ledMatrix));
-//}
-
-void setPixel(int Pixel, int red, int green, int blue) {
+void setPixelRgb(int Pixel, int red, int green, int blue) {
 	// FastLED
-	if(NUM_LEDS_BL<28 && Pixel>126) return;
+	if(Pixel > NUM_LEDS) return;
 	else{
 		leds[Pixel].g = red;
 		leds[Pixel].r = green;
