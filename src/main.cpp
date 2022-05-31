@@ -1,13 +1,19 @@
 #include <Arduino.h>
+#include <bsec.h>
+#include <bsec_serialized_configurations_selectivity.h>
 #include "time.h"
 #include "Preferences.h"
 #include "WiFi.h"
 #include "ESPmDNS.h"
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
 #include "EventLog.h"
+#include "FastLED.h"
 
 //FastLED settings
 #define FASTLED_ESP32
-#include "FastLED.h"
+#define COLOR_ORDER 	GRB
+#define CHIPSET    		WS2812
 
 //Number of LEDs in Array for front/back
 #define NUM_LEDS 3
@@ -33,8 +39,8 @@ String mode = "";
 //debug settings
 bool debugmode = false;
 
-unsigned long refresh_interval=500;
-unsigned long previousMillis=0;
+unsigned long reconnect_mqtt_interval = 5000;
+unsigned long previousMillis = 0;
 bool firstRun = true;
 
 //LED settings
@@ -45,6 +51,7 @@ bool ledsEnabled = true;
 ////=====Logging functionality======
 EventLog logging;
 bool logToSerial;
+bool logBsecToSerial = false;
 
 ////=====WiFi functionality======
 bool wifiActive = false;
@@ -54,6 +61,7 @@ static volatile bool wifiConnected = false;
 String wifi_config_SSID = "Airquality_WiFi_Config";
 WiFiServer server(80);
 WiFiClient client;
+WiFiClient clientMqtt;
 String wifiSSID="", wifiPassword="";
 bool wifiConfigMode = false;
 String header="";
@@ -64,12 +72,16 @@ unsigned long previousMillisWifiTimer2 = 0;
 
 ////=====MQTT functionality======
 bool mqttEnabled = true;
-String mqttIp = "192.160.0.1";
+bool mqttConnected = false;
+String mqttIp = "192.160.0.33";
 int mqttPort = 1883;
 String mqttSendTopic = "myroom";
 String mqttClientName = "ESP32Airquality";
 String mqttUserName = "";
 String mqttPassword = "";
+PubSubClient mqttClient(clientMqtt);
+// MQTT meta info
+String mqttMetaRoomName = "myroom";
 
 void wifiStartAPmode();
 void wifiAPClientHandle();
@@ -98,32 +110,77 @@ bool configStored = false;
 
 void clearLedPanel();
 
+// BME688 Sensor related functions
+void errLeds(void);
+void checkBsecStatus(Bsec& bsec);
+void updateBsecState(Bsec& bsec);
+void bsecCallback(const bme68x_data& input, const BsecOutput& outputs);
+void sendMqttData(void);
+void reconnectMqttClient(void);
+// Create an object of the class Bsec
+Bsec bsecInst(bsecCallback);
+
+// Air quality runtime variable declaration
+// Runtime variable declaration
+float outputTemp;
+float outputPressure;
+float outputHumidity;
+float outputCo2;
+float outputVocEquiv;
+float outputIaq;
+float outputIaqAcc;
+
+int airQualityState = 0;  // 0 is first LED -> Red
+int lastChangeHueValue = 0;
+int stateChangeHysteresis = 10;
+
 void setup()
 {
-	//Open serial interface
-	Serial.begin(9600);
+	// Open serial interface
+	Serial.begin(115200);
 
-	//Configure logging, turn on or off
+	// Init the sensor interface
+	bsec_virtual_sensor_t sensorList[] = { 
+		BSEC_OUTPUT_RAW_TEMPERATURE,
+		BSEC_OUTPUT_RAW_PRESSURE,
+		BSEC_OUTPUT_RAW_HUMIDITY,
+		BSEC_OUTPUT_IAQ,
+		BSEC_OUTPUT_CO2_EQUIVALENT,
+		BSEC_OUTPUT_BREATH_VOC_EQUIVALENT
+	};
+
+	if(!bsecInst.begin(0x77, Wire) ||
+		!bsecInst.setConfig(bsec_config_selectivity) ||
+		!bsecInst.updateSubscription(sensorList, ARRAY_LEN(sensorList), BSEC_SAMPLE_RATE_LP))
+		checkBsecStatus(bsecInst);
+		
+	Serial.println("\nBSEC library version " + String(bsecInst.getVersion().major) + "." + String(bsecInst.getVersion().minor) + "." + String(bsecInst.getVersion().major_bugfix) + "." + String(bsecInst.getVersion().minor_bugfix));
+	delay(10);
+
+	// Configure logging, turn on or off
 	logToSerial = true;
 	logging.setLineBreak("<br>\n");
 
-	//Turn off Bluetooth
+	// Turn off Bluetooth
 	btStop();
 
-	//init FastLED
+	// init FastLED
 	pinMode(DATA_PIN, OUTPUT);
-	FastLED.addLeds<WS2812, DATA_PIN, RGB>(leds, NUM_LEDS);
+	FastLED.addLeds<CHIPSET, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+	fill_solid(leds, 3, CRGB(0,0,0));
+	FastLED.show();
+	delay(500);
 
-	//init random number generator
+	// init random number generator
 	randomSeed(analogRead(35));
 
-	//Read config if stored in Flash or initialize
-	//Reset EEPROM if corrupted
-	//setDefaults();
+	// Read config if stored in Flash or initialize
+	// Reset EEPROM if corrupted
+	// setDefaults();
 	if(readConfigFromFlash()) configStored=true;
 	else writeConfigToFlash();
 
-	//Light all 3 LEDs in a color to signal boot process
+	// Light all 3 LEDs in a color to signal boot process
 	setPixelRgb(0,40,115,255);
 	setPixelRgb(1,40,115,255);
 	setPixelRgb(2,40,115,255);
@@ -131,7 +188,7 @@ void setup()
 	delay(200);
 	Log_println("Ready for Wifi!");
 
-	//Check if ssid / key are already stored
+	// Check if ssid / key are already stored
 	if(!wifiSSID.equals("") && !wifiPassword.equals("")) wifiActive = true;
 
 	if(!wifiActive || !wifiEnabled){
@@ -142,6 +199,32 @@ void setup()
 		//try to connect to wifi if turned on
 		Log_println("WiFi active, try to connect...");
 		wifiConnect();
+	}
+
+	if (wifiConnected && mqttEnabled) {
+		mqttClient.setServer(mqttIp.c_str(), mqttPort);
+	
+		for (int i = 0; i<=5; i++) {
+			if (!mqttClient.connected()) {
+				Log_println("Attempting MQTT connection to broker " + mqttIp + ":" + mqttPort + "...");
+		
+				if (mqttClient.connect("ESP32Client", mqttUserName.c_str(), mqttPassword.c_str() )) {
+					mqttConnected = true;
+					break;
+				}
+				else {
+					Log_println("Connecting to MQTT broker failed with state: " + mqttClient.state());
+					delay(1000);
+				}
+			} else{
+				mqttConnected = true;
+				break;
+			}
+		}
+
+		if (mqttConnected){
+			Log_println("Connected to the MQTT broker");
+		}
 	}
 }
 
@@ -161,9 +244,11 @@ void controlSwitch(){
 	// SET_MQTT_CONNECTION IP,Port
 	// SET_MQTT_CREDENTIALS Clientname,Username,Password
 	// SET_MQTT_SEND_TOPIC Topic
+	// SET_ROOM_NAME room
 	// TOGGLE_WIFI
 	// TOGGLE_MQTT
 	// TOGGLE_LEDS
+	// TOGGLE_BSEC_SERIAL_LOG
 	// SET_BRIGHTNESS 40 (values: 40-255)
 	// SET_DEVICENAME NeuerName <- set the Wifi DNS name: http://devicename.local
 	// SET_DEBUGMODE
@@ -173,7 +258,6 @@ void controlSwitch(){
 	// GET_MEM_USAGE
 	// GET_CONFIG
 	// IMPORT_CONFIG val1,val2,val3,...
-	
 
 	if(!mode.equals("")){
 
@@ -211,6 +295,17 @@ void controlSwitch(){
 
 			if(ledsEnabled) Log_println("LEDs sind nun eingeschaltet.");
 			else Log_println("LEDs sind nun ausgeschaltet.");
+
+		}else if(mode.equals("TOGGLE_BSEC_SERIAL_LOG")){
+			//toggle bsec output logging direct to serial
+			logBsecToSerial = !logBsecToSerial;
+
+			settings.begin("settings", false);
+			settings.putBool("logBsecToSerial",logBsecToSerial);
+			settings.end();
+
+			if(logBsecToSerial) Log_println("BSEC Output Log an Serial ist nun eingeschaltet.");
+			else Log_println("BSEC Output Log an Serial ist nun ausgeschaltet.");
 
 		}else if(mode.equals("GET_CONFIG")){
 			//get all variable values saved in flash
@@ -339,6 +434,19 @@ void controlSwitch(){
 
 			Log_println("Das MQTT Topic zum Senden wurde eingestellt.");
 
+		}else if(mode.indexOf("SET_ROOM_NAME") != -1){
+			// Set MQTT meta info room name
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			mqttMetaRoomName = mode.substring(spaceIndex + 1, secondSpaceIndex);
+
+			// Save to Flash
+			settings.begin("settings", false);
+			settings.putBool("mqttMetaRoomName", mqttMetaRoomName);
+			settings.end();
+
+			Log_println("Das MQTT Metainfo 'room' wurde eingestellt.");
+
 		}else if(mode.equals("VERSION")){
 			//get actual firmware version
 
@@ -382,7 +490,7 @@ void controlSwitch(){
 
 void setDefaults(){
 	debugmode = false;
-
+	logBsecToSerial = true;
 	brightness = 40;
 
 	mqttEnabled = true;
@@ -392,6 +500,7 @@ void setDefaults(){
 	mqttClientName = "ESP32Airquality";
 	mqttUserName = "";
 	mqttPassword = "";
+	mqttMetaRoomName = "myroom";
 
 //	wifiSSID = "none";
 //	wifiPassword = "none";
@@ -469,19 +578,19 @@ void wifiConnect(){
 
 	}
 	else{
-		//if credentials exist, try to connect
+		// if credentials exist, try to connect
 
 		WiFi.mode(WIFI_MODE_STA);
-		//WiFi.setHostname("Wordclock");
+		// WiFi.setHostname("Wordclock");
 		WiFi.setHostname(netDevName.c_str());
 		WiFi.begin(wifiSSID.c_str(), wifiPassword.c_str());
 
-		//pruefen, ob verbindung vorhanden ist
+		// Pruefen, ob Verbindung vorhanden ist
 		unsigned long currentMillisConnect = millis();
 		unsigned long previousMillisConnect = currentMillisConnect;
 		while ((unsigned long)(currentMillisConnect - previousMillisConnect) <= 10000){
 			if(WiFi.status() == WL_CONNECTED) break;
-			//Wait for connection being established...
+			// Wait for connection being established...
 			delay(500);
 			Serial.print(".");
 			currentMillisConnect = millis();
@@ -489,6 +598,10 @@ void wifiConnect(){
 		if(WiFi.status() != WL_CONNECTED){
 			//If connection fails -> Shut down Wifi
 			wifiActive = false;
+			wifiConnected = false;
+			mqttEnabled = false;
+			mqttConnected = false;
+
 			WiFi.mode(WIFI_OFF);
 
 			//Flash LEDs red if connection failed
@@ -1376,14 +1489,17 @@ bool readConfigFromFlash(){
 
 	netDevName = settings.getString("netDevName", "airquality");
 
+	logBsecToSerial = settings.getBool("logBsecToSerial", true);
+
 	// MQTT settings
 	mqttEnabled = settings.getBool("mqttEnabled", true);
 	mqttIp = settings.getString("mqttIp", "192.160.0.1");
- 	mqttPort = settings.getInt("brightness", 1883);
+ 	mqttPort = settings.getInt("mqttPort", 1883);
 	mqttSendTopic = settings.getString("mqttSendTopic", "myroom");
 	mqttClientName = settings.getString("mqttClientName", "ESP32Airquality");
 	mqttUserName = settings.getString("mqttUserName", "");
 	mqttPassword = settings.getString("mqttPassword", "");
+	mqttMetaRoomName = settings.getString("mqttMetaRoomName", "myroom");
 
 	settings.end();
 
@@ -1402,6 +1518,7 @@ void writeConfigToFlash(){
 	settings.putBool("debugmode", debugmode);
 	settings.putInt("brightness", brightness);
 	settings.putString("netDevName", netDevName);
+	settings.putBool("logBsecToSerial", logBsecToSerial);
 
 	// MQTT settings
 	settings.putBool("mqttEnabled", mqttEnabled);
@@ -1411,6 +1528,7 @@ void writeConfigToFlash(){
 	settings.putString("mqttClientName", mqttClientName);
 	settings.putString("mqttUserName", mqttUserName);
 	settings.putString("mqttPassword", mqttPassword);
+	settings.putString("mqttMetaRoomName", mqttMetaRoomName);
 
 	settings.end();
 
@@ -1443,6 +1561,10 @@ String getConfig(){
 	confTmp += "," + mqttUserName;
 	//10
 	confTmp += "," + mqttPassword;
+	//11
+	confTmp += "," + mqttMetaRoomName;
+	//12
+	confTmp += "," + logBsecToSerial;
 
 	return confTmp;
 }
@@ -1537,10 +1659,13 @@ void importConfig(String confStr){
 			mqttPassword = stringPtr;
 			break;
 		case 11:
-			//spare
+			//mqtt meta room name
+			mqttMetaRoomName = stringPtr;
 			break;
 		case 12:
-			//spare
+			//log bsec output to serial
+			if(((String)stringPtr).equals("1")) logBsecToSerial = true;
+			else logBsecToSerial = false;
 			break;
 		case 13:
 			//spare
@@ -1588,6 +1713,23 @@ void loop()
 	//execute switch for control options
 	if(!mode.equals("")) controlSwitch();
 
+	if(!bsecInst.run())
+		checkBsecStatus(bsecInst);
+
+	if (!mqttClient.connected() && mqttEnabled) {
+		mqttConnected = false;
+
+		// Start reconnect every x seconds
+		unsigned long currentMillis = millis();
+		if (((unsigned long)(currentMillis - previousMillis) >= reconnect_mqtt_interval)) {
+			reconnectMqttClient();
+			previousMillis = currentMillis;
+		}
+
+	}
+	
+	if (mqttConnected) mqttClient.loop();
+
 	// Example for interval/timer check
 	/*
 	unsigned long currentMillis = millis();
@@ -1604,8 +1746,8 @@ void setPixelRgb(int Pixel, int red, int green, int blue) {
 	// FastLED
 	if(Pixel > NUM_LEDS) return;
 	else{
-		leds[Pixel].g = red;
-		leds[Pixel].r = green;
+		leds[Pixel].g = green;
+		leds[Pixel].r = red;
 		leds[Pixel].b = blue;
 	}
 
@@ -1639,5 +1781,183 @@ unsigned int rand_interval(unsigned int min, unsigned int max)
     } while (r >= limit);
 
     return min + (r / buckets);
+}
+
+void errLeds(void)
+{
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(100);
+  digitalWrite(LED_BUILTIN, LOW);
+  delay(100);
+}
+
+void reconnectMqttClient(void) {
+  Log_println("Connection to MQTT broker lost, attempting reconnect...");
+  // Attempt to connect
+  if (!mqttClient.connected()) {
+    if (mqttClient.connect("ESP32Client")) {
+      Log_println("Reconnected to broker");
+      mqttConnected = true;
+    } else {
+      Log_println("Reconnect to broker failed with state: rc=" + mqttClient.state());
+    }
+  } else {
+    mqttConnected = true;
+  }
+}
+
+void updateBsecState(Bsec& bsec)
+{
+  static uint16_t stateUpdateCounter = 0;
+	bool update = false;
+  
+	if (stateUpdateCounter == 0) {
+    const bsec_output_t* iaq = bsec.getOutput(BSEC_OUTPUT_IAQ);
+		/* First state update when IAQ accuracy is >= 3 */
+    if (iaq && iaq->accuracy >= 3) {
+      update = true;
+      stateUpdateCounter++;
+    }
+	}
+
+	if (update)
+    checkBsecStatus(bsec);
+}
+
+void bsecCallback(const bme68x_data& input, const BsecOutput& outputs) 
+{ 
+  if (!outputs.len) 
+    return;
+    
+  if(logBsecToSerial) Serial.println("BSEC outputs:\n\ttimestamp = " + String((int)(outputs.outputs[0].time_stamp / INT64_C(1000000))));
+
+  for (uint8_t i = 0; i < outputs.len; i++) {
+    const bsec_output_t& output = outputs.outputs[i];
+
+    switch (output.sensor_id) {
+      case BSEC_OUTPUT_IAQ:
+        if(logBsecToSerial) Serial.println("\tiaq = " + String(output.signal));
+        if(logBsecToSerial) Serial.println("\tiaq accuracy = " + String((int)output.accuracy));
+        outputIaq = output.signal;
+        outputIaqAcc = (int)output.accuracy;
+        break;
+      case BSEC_OUTPUT_RAW_TEMPERATURE:
+        if(logBsecToSerial) Serial.println("\ttemperature = " + String(output.signal));
+        outputTemp = output.signal;
+        break;
+      case BSEC_OUTPUT_RAW_PRESSURE:
+        if(logBsecToSerial) Serial.println("\tpressure = " + String(output.signal));
+        outputPressure = output.signal;
+        break;
+      case BSEC_OUTPUT_RAW_HUMIDITY:
+        if(logBsecToSerial) Serial.println("\thumidity = " + String(output.signal));
+        outputHumidity = output.signal;
+        break;
+      case BSEC_OUTPUT_CO2_EQUIVALENT:
+        if(logBsecToSerial) Serial.println("\tCO2 Equivalent = " + String(output.signal));
+        outputCo2 = output.signal;
+        break;
+        case BSEC_OUTPUT_BREATH_VOC_EQUIVALENT:
+        if(logBsecToSerial) Serial.println("\tBreath VOC Equivalent = " + String(output.signal));
+        outputVocEquiv = output.signal;
+        break;
+      default:
+        break;
+    }
+  }
+
+  // Map IAQ value to HSV color between green and red
+  uint8_t hueVal = map((long)outputIaq, 0, 250, 96, 25);
+  uint8_t satVal = 255;
+  uint8_t valVal = 255;
+
+  if(logBsecToSerial) Serial.println("\tCalculated HUE Value = " + String(hueVal));
+
+  // Turn all LEDs off
+  fill_solid(leds, 3, CRGB(0,0,0));
+
+  // Check if the value change is big enough to change the state
+  // -> Avoid bouncing between two states
+  if (abs(hueVal - lastChangeHueValue) >= stateChangeHysteresis) {
+    // Determine which LED should be turned on
+    if (hueVal >= 64) {
+      // State: Good -> Green
+      airQualityState = 2;
+    }
+    else if (hueVal < 64 && hueVal >= 32) {
+      // State: Quite good -> Yellow
+      airQualityState = 1;
+    }
+    else {
+      // State: Bad -> Red
+      airQualityState = 0;
+    }
+
+    // Update state change value
+    lastChangeHueValue = hueVal;
+  }
+  
+  // Set LED color
+  leds[airQualityState] = CHSV(hueVal, satVal, valVal);
+  FastLED.setBrightness(brightness);
+  FastLED.show();
+
+  if (mqttConnected)
+    sendMqttData();
+  
+  updateBsecState(bsecInst);
+}
+
+void sendMqttData(void)
+{
+  StaticJsonDocument<200> doc;
+
+  doc["iaq"] = outputIaq;
+  doc["iaq_acc"] = outputIaqAcc;
+  doc["temp"] = outputTemp;
+  doc["pressure"] = outputPressure;
+  doc["humidity"] = outputHumidity;
+  doc["co2_eq"] = outputCo2;
+  doc["voc_eq"] = outputVocEquiv;
+	doc["room"] = mqttMetaRoomName;
+
+  String jsonPayload;
+  serializeJson(doc, jsonPayload);
+
+	String sendTopic = mqttClientName + "/" + mqttSendTopic;
+
+  if(logBsecToSerial) Serial.println("Sending message to MQTT topic " + sendTopic + "...");
+  if(logBsecToSerial) Serial.println(jsonPayload);
+ 
+  if (mqttClient.publish(sendTopic.c_str(), (char*) jsonPayload.c_str()) == true) {
+    if(logBsecToSerial) Serial.println("Success sending message");
+  } else {
+    if(logBsecToSerial) Serial.println("Error sending message");
+  }
+ 
+  mqttClient.loop();
+}
+
+void checkBsecStatus(Bsec& bsec)
+{
+  int bme68x_status = (int)bsec.getBme68xStatus();
+  int bsec_status = (int)bsec.getBsecStatus();
+  
+  if (bsec_status < BSEC_OK) {
+      Serial.println("BSEC error code : " + String(bsec_status));
+      for (;;)
+        errLeds(); /* Halt in case of failure */
+  } else if (bsec_status > BSEC_OK) {
+      Serial.println("BSEC warning code : " + String(bsec_status));
+  }
+
+  if (bme68x_status < BME68X_OK) {
+      Serial.println("BME68X error code : " + String(bme68x_status));
+      for (;;)
+        errLeds(); /* Halt in case of failure */
+  } else if (bme68x_status > BME68X_OK) {
+      Serial.println("BME68X warning code : " + String(bme68x_status));
+  }
 }
 
