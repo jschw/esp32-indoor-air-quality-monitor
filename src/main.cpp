@@ -429,7 +429,7 @@ void controlSwitch(){
 
 			// Save to Flash
 			settings.begin("settings", false);
-			settings.putBool("mqttSendTopic", mqttEnabled);
+			settings.putString("mqttSendTopic", mqttSendTopic);
 			settings.end();
 
 			Log_println("Das MQTT Topic zum Senden wurde eingestellt.");
@@ -442,7 +442,7 @@ void controlSwitch(){
 
 			// Save to Flash
 			settings.begin("settings", false);
-			settings.putBool("mqttMetaRoomName", mqttMetaRoomName);
+			settings.putString("mqttRoomName", mqttMetaRoomName);
 			settings.end();
 
 			Log_println("Das MQTT Metainfo 'room' wurde eingestellt.");
@@ -1499,7 +1499,7 @@ bool readConfigFromFlash(){
 	mqttClientName = settings.getString("mqttClientName", "ESP32Airquality");
 	mqttUserName = settings.getString("mqttUserName", "");
 	mqttPassword = settings.getString("mqttPassword", "");
-	mqttMetaRoomName = settings.getString("mqttMetaRoomName", "myroom");
+	mqttMetaRoomName = settings.getString("mqttRoomName", "myroom");
 
 	settings.end();
 
@@ -1528,7 +1528,7 @@ void writeConfigToFlash(){
 	settings.putString("mqttClientName", mqttClientName);
 	settings.putString("mqttUserName", mqttUserName);
 	settings.putString("mqttPassword", mqttPassword);
-	settings.putString("mqttMetaRoomName", mqttMetaRoomName);
+	settings.putString("mqttRoomName", mqttMetaRoomName);
 
 	settings.end();
 
@@ -1920,12 +1920,12 @@ void sendMqttData(void)
   doc["humidity"] = outputHumidity;
   doc["co2_eq"] = outputCo2;
   doc["voc_eq"] = outputVocEquiv;
-	doc["room"] = mqttMetaRoomName;
+  doc["room"] = mqttMetaRoomName;
 
   String jsonPayload;
   serializeJson(doc, jsonPayload);
 
-	String sendTopic = mqttClientName + "/" + mqttSendTopic;
+  String sendTopic = mqttClientName + "/" + mqttSendTopic;
 
   if(logBsecToSerial) Serial.println("Sending message to MQTT topic " + sendTopic + "...");
   if(logBsecToSerial) Serial.println(jsonPayload);
