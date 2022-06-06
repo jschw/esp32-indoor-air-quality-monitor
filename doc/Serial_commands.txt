@@ -1,0 +1,18 @@
+// SET_WIFI_CREDETIALS SSID,Password
+// SET_MQTT_CONNECTION IP,Port
+// SET_MQTT_CREDENTIALS Clientname,Username,Password
+// SET_MQTT_SEND_TOPIC Topic
+// SET_ROOM_NAME room
+// TOGGLE_WIFI
+// TOGGLE_MQTT
+// TOGGLE_LEDS
+// TOGGLE_BSEC_SERIAL_LOG
+// SET_BRIGHTNESS 40 (values: 40-255)
+// SET_DEVICENAME NeuerName <- set the Wifi DNS name: http://devicename.local
+// SET_DEBUGMODE
+// VERSION
+// SET_DEFAULTS
+// GET_SERIAL
+// GET_MEM_USAGE
+// GET_CONFIG
+// IMPORT_CONFIG val1,val2,val3,...

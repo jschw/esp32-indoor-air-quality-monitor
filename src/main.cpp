@@ -39,7 +39,7 @@ String mode = "";
 //debug settings
 bool debugmode = false;
 
-unsigned long reconnect_mqtt_interval = 5000;
+unsigned long reconnect_mqtt_interval = 10000;
 unsigned long previousMillis = 0;
 bool firstRun = true;
 
@@ -198,6 +198,8 @@ void setup()
 	}else{
 		//try to connect to wifi if turned on
 		Log_println("WiFi active, try to connect...");
+		Serial.println(wifiSSID+"<");
+		Serial.println(wifiPassword+"<");
 		wifiConnect();
 	}
 
@@ -261,6 +263,9 @@ void controlSwitch(){
 
 	if(!mode.equals("")){
 
+		// Trim trailing whitespace and Linebreaks
+		mode.trim();
+
 		if(mode.equals("TOGGLE_WIFI")){
 		//toggle wifi functionality
 		wifiEnabled = !wifiEnabled;
@@ -294,7 +299,13 @@ void controlSwitch(){
 			settings.end();
 
 			if(ledsEnabled) Log_println("LEDs sind nun eingeschaltet.");
-			else Log_println("LEDs sind nun ausgeschaltet.");
+			else {
+				// Turn off all LEDs
+				fill_solid(leds, 3, CRGB(0,0,0));
+				FastLED.show();
+
+				Log_println("LEDs sind nun ausgeschaltet.");
+			} 
 
 		}else if(mode.equals("TOGGLE_BSEC_SERIAL_LOG")){
 			//toggle bsec output logging direct to serial
@@ -331,13 +342,9 @@ void controlSwitch(){
 
 			showStrip();
 
-			//save to Flash
-			writeConfigToFlash();
-
-			//settings.begin("settings", false);
-			//settings.putInt("brightness", brightness);
-			//settings.putBool("autoBrightness", autoBrightness);
-			//settings.end();
+			settings.begin("settings", false);
+			settings.putInt("brightness", brightness);
+			settings.end();
 
 			Log_println("Die Helligkeit wurde eingestellt.");
 
@@ -373,6 +380,9 @@ void controlSwitch(){
 
 			Log_println("Die Zugangsdaten fuer WiFi wurden eingestellt.");
 
+			//Softrestart
+			ESP.restart();
+
 		}else if(mode.indexOf("SET_MQTT_CONNECTION") != -1){
 			// Set MQTT connection info
 			mqttEnabled = true;
@@ -390,9 +400,15 @@ void controlSwitch(){
 			mqttPort = credString.substring(credIndex + 1, secondCredIndex).toInt();
 
 			// Save to Flash
-			writeConfigToFlash();
+			settings.begin("settings", false);
+			settings.putString("mqttIp", mqttIp);
+			settings.putInt("mqttPort", mqttPort);
+			settings.end();
 
 			Log_println("Die Verbindungsdaten des MQTT Brokers wurden eingestellt.");
+
+			//Softrestart
+			ESP.restart();
 
 		}else if(mode.indexOf("SET_MQTT_CREDENTIALS") != -1){
 			// Set MQTT Broker credentials
@@ -409,7 +425,11 @@ void controlSwitch(){
 
 			mqttClientName = credString.substring(0, credIndex);
 			mqttUserName = credString.substring(credIndex + 1, secondCredIndex);
+			// Replace - with whitespace for empty Username
+			if (mqttUserName.equals("-")) mqttUserName = "";
 			mqttPassword = credString.substring(secondCredIndex+1);
+			// Replace - with whitespace for empty Password
+			if (mqttPassword.equals("-")) mqttPassword = "";
 
 			// Save to Flash
 			settings.begin("settings", false);
@@ -420,6 +440,9 @@ void controlSwitch(){
 			settings.end();
 
 			Log_println("Die Zugangsdaten des MQTT Brokers wurden eingestellt.");
+
+			//Softrestart
+			ESP.restart();
 
 		}else if(mode.indexOf("SET_MQTT_SEND_TOPIC") != -1){
 			// Set MQTT topic name for sending
@@ -456,6 +479,9 @@ void controlSwitch(){
 			setDefaults();
 			writeConfigToFlash();
 			Log_println("Die Standardeinstellungen wurden wiederhergestellt.");
+
+			//Softrestart
+			ESP.restart();
 		
 		}else if(mode.equals("GET_SERIAL")){
 			Log_println(getWiFiKey(false));
@@ -1716,7 +1742,7 @@ void loop()
 	if(!bsecInst.run())
 		checkBsecStatus(bsecInst);
 
-	if (!mqttClient.connected() && mqttEnabled) {
+	if (!mqttClient.connected() && mqttEnabled && wifiConnected) {
 		mqttConnected = false;
 
 		// Start reconnect every x seconds
