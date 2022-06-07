@@ -133,6 +133,7 @@ float outputIaqAcc;
 int airQualityState = 0;  // 0 is first LED -> Red
 int lastChangeHueValue = 0;
 int stateChangeHysteresis = 10;
+float tempOffset = -2.6;
 
 void setup()
 {
@@ -247,6 +248,7 @@ void controlSwitch(){
 	// SET_MQTT_CREDENTIALS Clientname,Username,Password
 	// SET_MQTT_SEND_TOPIC Topic
 	// SET_ROOM_NAME room
+	// SET_TEMP_OFFSET offset
 	// TOGGLE_WIFI
 	// TOGGLE_MQTT
 	// TOGGLE_LEDS
@@ -470,6 +472,20 @@ void controlSwitch(){
 
 			Log_println("Das MQTT Metainfo 'room' wurde eingestellt.");
 
+		}
+		else if(mode.indexOf("SET_TEMP_OFFSET") != -1){
+			// Set static temperature offset
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			tempOffset = mode.substring(spaceIndex + 1, secondSpaceIndex).toFloat();
+
+			// Save to Flash
+			settings.begin("settings", false);
+			settings.putFloat("tempOffset", tempOffset);
+			settings.end();
+
+			Log_println("Der statische Temperaturoffset wurde eingestellt.");
+
 		}else if(mode.equals("VERSION")){
 			//get actual firmware version
 
@@ -518,6 +534,7 @@ void setDefaults(){
 	debugmode = false;
 	logBsecToSerial = true;
 	brightness = 40;
+	tempOffset = -2.6;
 
 	mqttEnabled = true;
 	mqttIp = "192.160.0.1";
@@ -1517,6 +1534,8 @@ bool readConfigFromFlash(){
 
 	logBsecToSerial = settings.getBool("logBsecToSerial", true);
 
+	tempOffset = settings.getFloat("tempOffset", -2.6);
+
 	// MQTT settings
 	mqttEnabled = settings.getBool("mqttEnabled", true);
 	mqttIp = settings.getString("mqttIp", "192.160.0.1");
@@ -1545,6 +1564,7 @@ void writeConfigToFlash(){
 	settings.putInt("brightness", brightness);
 	settings.putString("netDevName", netDevName);
 	settings.putBool("logBsecToSerial", logBsecToSerial);
+	settings.putFloat("tempOffset", tempOffset);
 
 	// MQTT settings
 	settings.putBool("mqttEnabled", mqttEnabled);
@@ -1591,6 +1611,8 @@ String getConfig(){
 	confTmp += "," + mqttMetaRoomName;
 	//12
 	confTmp += "," + logBsecToSerial;
+	//13
+	confTmp += "," + String(tempOffset);
 
 	return confTmp;
 }
@@ -1694,7 +1716,8 @@ void importConfig(String confStr){
 			else logBsecToSerial = false;
 			break;
 		case 13:
-			//spare
+			//temperature offset
+			tempOffset = ((String)stringPtr).toFloat();
 			break;
 		case 14:
 			//spare
@@ -1870,7 +1893,7 @@ void bsecCallback(const bme68x_data& input, const BsecOutput& outputs)
         break;
       case BSEC_OUTPUT_RAW_TEMPERATURE:
         if(logBsecToSerial) Serial.println("\ttemperature = " + String(output.signal));
-        outputTemp = output.signal;
+        outputTemp = output.signal + tempOffset;
         break;
       case BSEC_OUTPUT_RAW_PRESSURE:
         if(logBsecToSerial) Serial.println("\tpressure = " + String(output.signal));
