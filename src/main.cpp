@@ -23,6 +23,14 @@
 
 CRGB leds[NUM_LEDS];
 
+// === Settings for color mapping ===
+// Min/Max color mapped value
+int min_color_mapped = 96;
+int max_color_mapped = 25;
+// Min/Max input values for mapping
+int min_input_mapping = 0;
+int max_input_mapping = 250;
+
 //Set current firmware version
 extern const char SW_VERSION[] = {"1.0.0"};
 //1.0.0: 28.05.2022 -> Initial proof of concept with wordclock base
@@ -39,7 +47,7 @@ String mode = "";
 //debug settings
 bool debugmode = false;
 
-unsigned long reconnect_mqtt_interval = 10000;
+unsigned long reconnect_mqtt_interval = 15000;
 unsigned long previousMillis = 0;
 bool firstRun = true;
 
@@ -207,7 +215,7 @@ void setup()
 	if (wifiConnected && mqttEnabled) {
 		mqttClient.setServer(mqttIp.c_str(), mqttPort);
 	
-		for (int i = 0; i<=5; i++) {
+		for (int i = 0; i<=2; i++) {
 			if (!mqttClient.connected()) {
 				Log_println("Attempting MQTT connection to broker " + mqttIp + ":" + mqttPort + "...");
 		
@@ -1916,8 +1924,12 @@ void bsecCallback(const bme68x_data& input, const BsecOutput& outputs)
     }
   }
 
+  // Cut input value if it exceeds min/max bundaries
+  if (outputIaq > max_input_mapping) outputIaq = max_input_mapping;
+  if (outputIaq < min_input_mapping) outputIaq = min_input_mapping;
+
   // Map IAQ value to HSV color between green and red
-  uint8_t hueVal = map((long)outputIaq, 0, 250, 96, 25);
+  uint8_t hueVal = map((long)outputIaq, min_input_mapping, max_input_mapping, min_color_mapped, max_color_mapped);
   uint8_t satVal = 255;
   uint8_t valVal = 255;
 
