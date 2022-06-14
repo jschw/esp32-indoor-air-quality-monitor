@@ -7,6 +7,7 @@
 #include "ESPmDNS.h"
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 #include "EventLog.h"
 #include "FastLED.h"
 
@@ -91,6 +92,22 @@ PubSubClient mqttClient(clientMqtt);
 // MQTT meta info
 String mqttMetaRoomName = "myroom";
 
+////======Openweathermap functionality======
+bool enableOwmData = false;
+String owmApiKey = "";
+String longitude = "0.0";
+String latitude = "0.0";
+unsigned long lastTimeWeatherState = 0;
+unsigned long refreshWeatherInterval = 60000;
+String temp_out = "0.0";
+String humidity_out = "0.0";
+String windspeed_out = "0.0";
+String aqi_out = "0.0";
+String no2_out = "0.0";
+String o3_out = "0.0";
+String pm10_out = "0.0";
+
+
 void wifiStartAPmode();
 void wifiAPClientHandle();
 void wifiConnectedHandle(WiFiClient client);
@@ -110,6 +127,8 @@ String getConfig();
 String getDebugData();
 void importConfig(String confStr);
 void Log_println(String msg, int loglevel=0); //<-- Wrapper function for logging class
+String httpGETRequest(const char* serverName);
+void refreshOpenweatherData();
 
 //Config
 bool readConfigFromFlash();
@@ -255,10 +274,13 @@ void controlSwitch(){
 	// SET_MQTT_CONNECTION IP,Port
 	// SET_MQTT_CREDENTIALS Clientname,Username,Password
 	// SET_MQTT_SEND_TOPIC Topic
+	// SET_OWM_KEY xxxxx
+	// SET_OWM_LON_LAT lon,lat
 	// SET_ROOM_NAME room
 	// SET_TEMP_OFFSET offset
 	// TOGGLE_WIFI
 	// TOGGLE_MQTT
+	// TOGGLE_OWM
 	// TOGGLE_LEDS
 	// TOGGLE_BSEC_SERIAL_LOG
 	// SET_BRIGHTNESS 40 (values: 40-255)
@@ -299,6 +321,17 @@ void controlSwitch(){
 
 			if(mqttEnabled) Log_println("MQTT ist nun eingeschaltet.");
 			else Log_println("MQTT ist nun ausgeschaltet.");
+
+		}else if(mode.equals("TOGGLE_OWM")){
+			//toggle mqtt functionality
+			enableOwmData = !enableOwmData;
+
+			settings.begin("settings", false);
+			settings.putBool("enableOwmData",enableOwmData);
+			settings.end();
+
+			if(mqttEnabled) Log_println("Openweathermap ist nun eingeschaltet.");
+			else Log_println("Openweathermap ist nun ausgeschaltet.");
 
 		}else if(mode.equals("TOGGLE_LEDS")){
 			//toggle mqtt functionality
@@ -392,6 +425,42 @@ void controlSwitch(){
 
 			//Softrestart
 			ESP.restart();
+
+		}else if(mode.indexOf("SET_OWM_LON_LAT") != -1){
+			// Set wifi access credentials
+			wifiEnabled = true;
+
+			// Split command
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			String credString = mode.substring(spaceIndex + 1, secondSpaceIndex);
+
+			// Split credential string input
+			int credIndex = credString.indexOf(',');
+			int secondCredIndex = credString.indexOf(',', credIndex + 1);
+
+			longitude = credString.substring(0, credIndex);
+			latitude = credString.substring(credIndex + 1, secondCredIndex);
+
+			// Save to Flash
+			settings.begin("settings", false);
+			settings.putString("longitude", longitude);
+			settings.putString("latitude", latitude);
+			settings.end();
+
+			Log_println("Die Positionsdaten fuer Openweathermap wurden eingestellt.");
+
+		}else if(mode.indexOf("SET_OWM_KEY") != -1){
+			//set brightness for scaling
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			owmApiKey = mode.substring(spaceIndex + 1, secondSpaceIndex);
+
+			settings.begin("settings", false);
+			settings.putString("owmApiKey", owmApiKey);
+			settings.end();
+
+			Log_println("Der API Key fuer Openweathermap  wurde eingestellt.");
 
 		}else if(mode.indexOf("SET_MQTT_CONNECTION") != -1){
 			// Set MQTT connection info
@@ -552,6 +621,11 @@ void setDefaults(){
 	mqttUserName = "";
 	mqttPassword = "";
 	mqttMetaRoomName = "myroom";
+
+	enableOwmData = false;
+	owmApiKey = "";
+	longitude = "0.0";
+	latitude = "0.0";
 
 //	wifiSSID = "none";
 //	wifiPassword = "none";
@@ -719,7 +793,7 @@ void wifiConnect(){
 			clearLedPanel();
 			delay(400);
 
-			Log_println("The Wordclock is connected to the WiFi! :)");
+			Log_println("The Airquality Monitor is connected to the WiFi! :)");
 			Log_println("IP: " + WiFi.localIP().toString());
 			deviceIP = WiFi.localIP().toString();
 		}
@@ -1554,6 +1628,12 @@ bool readConfigFromFlash(){
 	mqttPassword = settings.getString("mqttPassword", "");
 	mqttMetaRoomName = settings.getString("mqttRoomName", "myroom");
 
+	// Openweather settings
+	enableOwmData = settings.getBool("enableOwmData", false);
+	owmApiKey = settings.getString("owmApiKey" , "");
+	longitude = settings.getString("longitude", "0.0");
+	latitude = settings.getString("latitude", "0.0");
+
 	settings.end();
 
 	settings.begin("wifi", false);
@@ -1583,6 +1663,12 @@ void writeConfigToFlash(){
 	settings.putString("mqttUserName", mqttUserName);
 	settings.putString("mqttPassword", mqttPassword);
 	settings.putString("mqttRoomName", mqttMetaRoomName);
+
+	// Openweather settings
+	settings.putBool("enableOwmData", enableOwmData);
+	settings.putString("owmApiKey", owmApiKey);
+	settings.putString("longitude", longitude);
+	settings.putString("latitude", latitude);
 
 	settings.end();
 
@@ -1787,6 +1873,16 @@ void loop()
 	
 	if (mqttConnected) mqttClient.loop();
 
+	// Refresh openweathermapdata
+	if (enableOwmData && WiFi.status()== WL_CONNECTED){
+		unsigned long currentMillis = millis();
+		if (((unsigned long)(currentMillis - lastTimeWeatherState) >= refreshWeatherInterval)) {
+			refreshOpenweatherData();
+			lastTimeWeatherState = currentMillis;
+		}
+		
+	}
+
 	// Example for interval/timer check
 	/*
 	unsigned long currentMillis = millis();
@@ -1972,7 +2068,7 @@ void bsecCallback(const bme68x_data& input, const BsecOutput& outputs)
 
 void sendMqttData(void)
 {
-  StaticJsonDocument<200> doc;
+  StaticJsonDocument<1024> doc;
 
   doc["iaq"] = outputIaq;
   doc["iaq_acc"] = outputIaqAcc;
@@ -1982,6 +2078,15 @@ void sendMqttData(void)
   doc["co2_eq"] = outputCo2;
   doc["voc_eq"] = outputVocEquiv;
   doc["room"] = mqttMetaRoomName;
+  if (enableOwmData) {
+	doc["temp_out"] = temp_out.toFloat();
+	doc["humidity_out"] = humidity_out.toFloat();
+	doc["windspeed"] = windspeed_out.toFloat();
+	doc["aqi_out"] = aqi_out.toFloat();
+	doc["no2_out"] = no2_out.toFloat();
+	doc["o3_out"] = o3_out.toFloat();
+	doc["pm10_out"] = pm10_out.toFloat();
+  }
 
   String jsonPayload;
   serializeJson(doc, jsonPayload);
@@ -2022,3 +2127,78 @@ void checkBsecStatus(Bsec& bsec)
   }
 }
 
+String httpGETRequest(const char* serverName) {
+  WiFiClient client;
+  HTTPClient http;
+    
+  // Your Domain name with URL path or IP address with path
+  http.begin(client, serverName);
+  
+  // Send HTTP POST request
+  int httpResponseCode = http.GET();
+  
+  String payload = "{}"; 
+  
+  if (httpResponseCode>0) {
+    // Serial.print("HTTP Response code: ");
+    // Serial.println(httpResponseCode);
+    payload = http.getString();
+  }
+  else {
+    Serial.print("HTTP Client Error code: ");
+    Serial.println(httpResponseCode);
+  }
+  // Free resources
+  http.end();
+
+  return payload;
+}
+
+void refreshOpenweatherData() {
+    String apiCallWeather = "http://api.openweathermap.org/data/2.5/weather?lat=" + latitude + "&lon=" + longitude + "&units=metric&appid=" + owmApiKey;
+    String apiCallAirquality = "http://api.openweathermap.org/data/2.5/air_pollution?lat=" + latitude + "&lon=" + longitude + "&appid=" + owmApiKey;
+
+	bool parseError = false;
+
+    StaticJsonDocument<1024> jsonDoc;
+
+	String jsonInput = httpGETRequest(apiCallWeather.c_str());
+    // Serial.println(jsonInput);
+      
+    DeserializationError parseErr = deserializeJson(jsonDoc, jsonInput);
+	JsonObject root;
+  
+    if (parseErr) {
+    	Serial.println("Parsing input failed!");
+    	Serial.println(parseErr.c_str());
+		parseError = true;
+    }
+	else {
+		root = jsonDoc.as<JsonObject>();
+    
+		temp_out = root["main"]["temp"].as<String>();
+		// pressure_out = root["main"]["pressure"].as<String>();
+		humidity_out = root["main"]["humidity"].as<String>();
+		windspeed_out = root["wind"]["speed"].as<String>();
+	}
+
+	// Get air pollution info
+	jsonInput = httpGETRequest(apiCallAirquality.c_str());
+	// Serial.println(jsonInput);
+      
+	parseErr = deserializeJson(jsonDoc, jsonInput);
+  
+	if (parseErr) {
+		Serial.println("Parsing airquality input failed!");
+		Serial.println(parseErr.c_str());
+		parseError = true;
+	}
+	else {
+		root = jsonDoc.as<JsonObject>();
+		aqi_out = root["list"][0]["main"]["aqi"].as<String>();
+		no2_out = root["list"][0]["components"]["no2"].as<String>();
+		o3_out = root["list"][0]["components"]["o3"].as<String>();
+		pm10_out = root["list"][0]["components"]["pm10"].as<String>();
+	}
+
+}
