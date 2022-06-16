@@ -32,6 +32,11 @@ int max_color_mapped = 25;
 int min_input_mapping = 0;
 int max_input_mapping = 250;
 
+// Mode for display values
+// iaq, co2, o3, pm10 (=Pollen)
+String displayMode = "iaq";
+
+// General variables
 //Set current firmware version
 extern const char SW_VERSION[] = {"1.0.0"};
 //1.0.0: 28.05.2022 -> Initial proof of concept with wordclock base
@@ -40,6 +45,8 @@ String netDevName = "airquality";
 String deviceIP = "";
 
 int commErrorCounter = 0;
+
+bool ventingActive = false;
 
 Preferences settings;
 
@@ -283,6 +290,7 @@ void controlSwitch(){
 	// TOGGLE_OWM
 	// TOGGLE_LEDS
 	// TOGGLE_BSEC_SERIAL_LOG
+	// TOGGLE_VENT_STATE
 	// SET_BRIGHTNESS 40 (values: 40-255)
 	// SET_DEVICENAME NeuerName <- set the Wifi DNS name: http://devicename.local
 	// SET_DEBUGMODE
@@ -360,6 +368,13 @@ void controlSwitch(){
 
 			if(logBsecToSerial) Log_println("BSEC Output Log an Serial ist nun eingeschaltet.");
 			else Log_println("BSEC Output Log an Serial ist nun ausgeschaltet.");
+
+		}else if(mode.equals("TOGGLE_VENTING_STATE")){
+			//toggle the venting state flag
+			ventingActive = !ventingActive;
+
+			if(ventingActive) Log_println("Es wird gerade gelueftet.");
+			else Log_println("Es wird nun nicht mehr gelueftet.");
 
 		}else if(mode.equals("GET_CONFIG")){
 			//get all variable values saved in flash
@@ -827,10 +842,10 @@ void wifiAPClientHandle()
 						// CSS to style the on/off buttons
 						// Feel free to change the background-color and font-size attributes to fit your preferences
 						client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}");
-						client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;");
+						client.println(".button { background-color: #008CC2; border: none; color: white; padding: 16px 40px;");
 						client.println("text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}");
 						client.println(".button2 {background-color: #555555;}");
-						client.println("input[type=submit].link {background-color: #4CAF50; border: none; color: white; padding: 16px 20px;");
+						client.println("input[type=submit].link {background-color: #008CC2; border: none; color: white; padding: 16px 20px;");
 						client.println("text-decoration: none; font-size: 18px; margin: 2px; cursor: pointer;}");
 						client.println("</style></head>");
 
@@ -911,7 +926,6 @@ double getWifiSignalStrength(){
 }
 
 void wifiConnectedHandle(WiFiClient client){
-	/*
 	//Log_println("New Client.");
 	String currentLine = "";
 	bool execControlSwitch = false;
@@ -936,154 +950,33 @@ void wifiConnectedHandle(WiFiClient client){
 
 
 					// handle the wordclock function based on header data
-					if(header.indexOf("GET /toggle_backlight") >= 0) {
-						//Backlight last mode on / off
-						if(enableBacklight) mode = "SET_BACKLIGHT_OFF";
-						else mode = "SET_BACKLIGHT_ON";
+					if (header.indexOf("GET /toggle_venting") >= 0) {
+						//Toggle Zustand Fenster
+						mode = "TOGGLE_VENTING_STATE";
 						execControlSwitch = true;
 						refreshPage = true;
 
-					}else if (header.indexOf("GET /set_backlight_rainbow") >= 0) {
-						//Set Backlight Rainbow mode
-						mode = "SET_BACKLIGHTMODE_RAINBOW";
+					}else if (header.indexOf("GET /toggle_wifi") >= 0) {
+						//Toggle WiFi
+						mode = "TOGGLE_WIFI";
 						execControlSwitch = true;
 						refreshPage = true;
 
-					}else if (header.indexOf("GET /set_backlight_daylight") >= 0) {
-						//Set Backlight auto daylight mode
-						mode = "SET_BACKLIGHTMODE_DAYLIGHT";
+					}else if (header.indexOf("GET /toggle_leds") >= 0) {
+						//Toggle LEDs on/off
+						mode = "TOGGLE_LEDS";
 						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /set_backlight_freeze") >= 0) {
-						//Set Backlight actual color
-						mode = "SET_BACKLIGHTMODE_FREEZE";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /go_sleep") >= 0) {
-						//clock to standby mode
-						//mode = "GOSLEEP";
-						//manual toggle standby
-						if(forceStandby) fadeInBL=true;
-						forceStandby = true;
-						refreshPage = true;
-						Log_println("Wechsel in Modus Standby (manuell).");
-					}else if (header.indexOf("GET /go_wake") >= 0) {
-						//clock to standby mode
-						mode = "GOWAKE";
-						forceStandby = false;
-						refreshPage = true;
-						Log_println("Wechsel in Modus Betrieb (manuell).");
-					}else if (header.indexOf("GET /toggle_sec1") >= 0) {
-						//Toggle Es ist
-						mode = "TOGGLE_SEC1";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /toggle_sec3") >= 0) {
-						//Toggle Uhr
-						mode = "TOGGLE_SEC3";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /toggle_auto_standby") >= 0) {
-						//Toggle automatic standby
-						mode = "TOGGLE_AUTO_STANDBY";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /toggle_touch") >= 0) {
-						//Toggle touch button
-						mode = "TOGGLE_SOFTTOUCH";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /toggle_timesync") >= 0) {
-						//Toggle time sync setting
-						mode = "TOGGLE_TIMESYNCSTATE";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /set_standby_jus") >= 0) {
-						//Set standby mode JUS
-						mode = "SET_STANDBY_JUS";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /set_standby_che") >= 0) {
-						//Set standby mode JCHE
-						mode = "SET_STANDBY_CHE";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					//}//else if (header.indexOf("GET /set_standby_xmastree") >= 0) {
-						//Set standby mode XMASTREE
-						//mode = "SET_STANDBY_XMASTREE";
-						//execControlSwitch = true;
-
-					}else if (header.indexOf("GET /set_standby_twinkle") >= 0) {
-						//Set standby mode Twinkle
-						mode = "SET_STANDBY_TWINKLE";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /set_displ_min_off") >= 0) {
-						//Set min display off
-						mode = "SET_MINUTES_DISPLAY_MODE 0";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /set_displ_min_1") >= 0) {
-						//Set min display middle
-						mode = "SET_MINUTES_DISPLAY_MODE 1";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /set_displ_min_2") >= 0) {
-						//Set min display edge
-						mode = "SET_MINUTES_DISPLAY_MODE 2";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /set_displ_min_3") >= 0) {
-						//Set min display middle one side
-						mode = "SET_MINUTES_DISPLAY_MODE 3";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /set_displ_min_4") >= 0) {
-						//Set min display edge one side
-						mode = "SET_MINUTES_DISPLAY_MODE 4";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /set_colormode_min_daylight") >= 0) {
-						//Set min display color to automatic daylight
-						mode = "SET_MINUTES_DISPLAY_COLOR_DAYLIGHT";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /presentation_xmastree") >= 0) {
-						//clock to presentation mode
-						//manual toggle standby
-						if(forceStandby) fadeInBL=true;
-						forceStandby = true;
-
-						isInPresentationMode = true;
-						standbyModeSaved = standbyMode;
-						standbyMode = "XMASTREE";
 						refreshPage = true;
 
 					}else if (header.indexOf("GET /settings") >= 0) {
-						// Display the HTML web page
+						// Display the settings HTML web page
 						client.println("<!DOCTYPE html><html>");
 						client.println("<head><meta charset=\"utf-8\" name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
 						client.println("<link rel=\"icon\" href=\"data:,\">");
 						// CSS to style the on/off buttons
 						// Feel free to change the background-color and font-size attributes to fit your preferences
 						client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
-						client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;");
+						client.println(".button { background-color: #008CC2; border: none; color: white; padding: 16px 40px;");
 						client.println("text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}");
 						client.println(".button2 {background-color: #555555;}");
 						client.println("fieldset {margin: 8px; border: 1px solid silver; padding: 8px; border-radius: 4px;}");
@@ -1093,139 +986,93 @@ void wifiConnectedHandle(WiFiClient client){
 						client.println(".button4 {font-size: 20px; background-color: #555555;}</style></head>");
 
 						// Web Page Heading
-						client.println("<body><h1>Weitere Einstellungen</h1>");
+						client.println("<body><h1>Einstellungen</h1>");
 
 
-						client.println("<p><a href=\"http://" + deviceIP + "/\"><button class=\"button button4\">Zurück zum Hauptmenü</button></a></p>");
+						client.println("<p><a href=\"http://" + deviceIP + "/\"><button class=\"button button4\">Zurück zur Hauptseite</button></a></p>");
 
 						// Change color front
 						client.println("<fieldset>");
-						client.println("<legend>Farbe Uhrzeitanzeige</legend>");
-						//Auto daylight color
-						if(colorMode == 1) client.println("<p><a href=\"/set_color_auto_daylight\"><button class=\"button button3\">Tageszeitabhängige Farbe</button></a></p>");
-						else client.println("<p><a href=\"/set_color_auto_daylight\"><button class=\"button button4\">Tageszeitabhängige Farbe</button></a></p>");
-
-						client.println("<p>Farbe eingeben:</p>");
-
+						client.println("<legend>MQTT Verbindung</legend>");
+						// Toggle MQTT functionality
+						if(mqttEnabled) client.println("<p><a href=\"/toggle_mqtt\"><button class=\"button button3\">MQTT Client ausschalten</button></a></p>");
+						else client.println("<p><a href=\"/toggle_mqtt\"><button class=\"button button4\">MQTT Client einschalten</button></a></p>");
+						
+						// Input IP/Port
+						client.println("<p>MQTT Verbindungsdaten eingeben:</p>");
 						client.print("<form method='get' action='a'>");
-						client.print("<input name='color' length=11>&nbsp;");
-						client.print("<input type='submit' class='send' value='OK'><br><br><b>Format:</b><br>RGB-Wert => RRR,GGG,BBB<br>Farbtemp. in Kelvin => Zahl<br>");
+						client.print("<input name='mqtt_conn' length=11>&nbsp;");
+						client.print("<input type='submit' class='send' value='OK'><br><br><b>Format: </b> IP,Port<br>");
 						client.print("</form>");
 
-						client.println("</fieldset><br>");
-
-						// Brightness settings
-						client.println("<fieldset>");
-						client.println("<legend>Helligkeit einstellen</legend>");
-						if(autoBrightness) client.println("<p><a href=\"/set_brightness_auto\"><button class=\"button button3\">Automatisch anpassen</button></a></p>");
-						else client.println("<p><a href=\"/set_brightness_auto\"><button class=\"button button4\">Automatisch anpassen</button></a></p>");
-
-						client.println("<p>Wert eingeben:</p>");
-
+						// Input MQTT User settings
+						client.println("<p>MQTT Zugangsdaten zum Broker eingeben:</p>");
 						client.print("<form method='get' action='a'>");
-						client.print("<input name='brightness' length=11>&nbsp;");
-						client.print("<input type='submit' class='send' value='OK'><br><br>Wert zwischen 5% und 100%");
+						client.print("<input name='mqtt_user' length=11>&nbsp;");
+						client.print("<input type='submit' class='send' value='OK'><br><br><b>Format: </b> Clientname,Username,Password<br>");
 						client.print("</form>");
 
-						client.println("</fieldset><br>");
-
-						// Change color backlight
-						client.println("<fieldset>");
-						client.println("<legend>Benutzerdefinierte Farbe für Backlight</legend>");
-
-						client.println("<p>Farbe eingeben:</p>");
-
+						// Input MQTT Topic
+						client.println("<p>MQTT Topic (senden) eingeben:</p>");
 						client.print("<form method='get' action='a'>");
-						client.print("<input name='color_bl' length=11>&nbsp;");
-						client.print("<input type='submit' class='send' value='OK'><br><br><b>Format:</b><br>RGB-Wert -> RRR,GGG,BBB");
+						client.print("<input name='mqtt_topic' length=11>&nbsp;");
+						client.print("<input type='submit' class='send' value='OK'><br><br><b>Format: </b> Clientname,Username,Password<br>");
 						client.print("</form>");
 						client.println("</fieldset><br>");
 
-						// Display minutes with backlight
-						if(NUM_LEDS_BL==28){
-							client.println("<fieldset>");
-							client.println("<legend>Minuten mit Backlight anzeigen</legend>");
-
-							client.println("<p>Minutenanzeige konfigurieren:</p>");
-							//Buttons anpassen
-							if(displayMinutes==0) client.println("<p><a href=\"/settings\"><button class=\"button button3\">Aus</button></a>&nbsp;");
-							else client.println("<p><a href=\"/set_displ_min_off\"><button class=\"button button4\">Aus</button></a>&nbsp;");
-
-							if(displayMinutes==1) client.println("<a href=\"/settings\"><button class=\"button button3\">Mitte</button></a></p>");
-							else client.println("<a href=\"/set_displ_min_1\"><button class=\"button button4\">Mitte</button></a></p>");
-
-							if(displayMinutes==2) client.println("<p><a href=\"/settings\"><button class=\"button button3\">Ecke</button></a>&nbsp;");
-							else client.println("<p><a href=\"/set_displ_min_2\"><button class=\"button button4\">Ecke</button></a>&nbsp;");
-
-							if(displayMinutes==3) client.println("<a href=\"/settings\"><button class=\"button button3\">Mitte2</button></a></p>");
-							else client.println("<a href=\"/set_displ_min_3\"><button class=\"button button4\">Mitte2</button></a></p>");
-
-							if(displayMinutes==4) client.println("<p><a href=\"/settings\"><button class=\"button button3\">Ecke2</button></a>&nbsp;");
-							else client.println("<p><a href=\"/set_displ_min_4\"><button class=\"button button4\">Ecke2</button></a>&nbsp;");
-
-							client.print("<br><br>Zu Mitte2/Ecke2: Es leuchtet pro Minute immer nur eine Seite.");
-
-							client.println("<p>Farbe eingeben:</p>");
-
-							client.print("<form method='get' action='a'>");
-							client.print("<input name='color_min' length=11>&nbsp;");
-							client.print("<input type='submit' class='send' value='OK'><br><br><b>Format:</b><br>RGB-Wert -> RRR,GGG,BBB");
-							client.print("</form>");
-
-							//Button minutes color daylight
-							if(displayMinutes && colormodeMin==1) client.println("<p><a href=\"/settings\"><button class=\"button button3\">Minutenanzeige Tageslichtfarbe</button></a></p>");
-							else client.println("<p><a href=\"/set_colormode_min_daylight\"><button class=\"button button4\">Minutenanzeige Tageslichtfarbe</button></a></p>");
-
-							client.println("</fieldset><br>");
-						}
-
-
-						// Set time
+						// Openweathermaps settings
 						client.println("<fieldset>");
-						client.println("<legend>Zeit einstellen</legend>");
+						client.println("<legend>Openweathermap Verbindung</legend>");
+						if(enableOwmData) client.println("<p><a href=\"/toggle_owm\"><button class=\"button button3\">OWM ausschalten</button></a></p>");
+						else client.println("<p><a href=\"/toggle_owm\"><button class=\"button button4\">OWM einschalten</button></a></p>");
 
-						if(isSummertime) client.println("<p><a href=\"/toggle_summertime\"><button class=\"button button4\">Auf Winterzeit umstellen</button></a></p>");
-						else client.println("<p><a href=\"/toggle_summertime\"><button class=\"button button4\">Auf Sommerzeit umstellen</button></a></p>");
-
-						client.println("<p>Datum und Zeit eingeben:</p>");
-
+						// Input OWM API Key
+						client.println("<p>Openweathermap API Key eingeben:</p>");
 						client.print("<form method='get' action='a'>");
-						client.print("<input name='time' length=32>&nbsp;");
-						client.print("<input type='submit' class='send' value='OK'><br><br><b>Format:</b><br>jjjj-mm-dd-hh-mm-ss");
+						client.print("<input name='owm_key' length=11>&nbsp;");
+						client.print("<input type='submit' class='send' value='OK'><br>");
 						client.print("</form>");
-						client.println("</fieldset>");
 
-						//Toggle auto Standby
-						client.println("<br><fieldset>");
-						client.println("<legend>Standby-Modus konfigurieren</legend>");
+						// Input OWM location
+						client.println("<p>Standort eingeben:</p>");
+						client.print("<form method='get' action='a'>");
+						client.print("<input name='owm_location' length=11>&nbsp;");
+						client.print("<input type='submit' class='send' value='OK'><br><br><b>Format: </b> Longitude,Latitude<br>");
+						client.print("</form>");
+						client.println("</fieldset><br>");
 
-						client.println("<p>Lichtabhängiger Standby:</p>");
-						if(enableAutoStandby) client.println("<p><a href=\"/toggle_auto_standby\"><button class=\"button button3\">Auto-Standby ausschalten</button></a></p>");
-						else client.println("<p><a href=\"/toggle_auto_standby\"><button class=\"button button4\">Auto-Standby einschalten</button></a></p>");
+						// Input sonstige Einstellungen
+						client.println("<fieldset>");
+						client.println("<legend>Sonstige Geräteeinstellungen</legend>");
 
-						//Set lightlevel to actual level
-						client.println("<p>Helligkeitsgrenze auf momentane Umgebungshelligkeit setzen:</p>");
-						client.println("<p><a href=\"/set_lightlevel_act\"><button class=\"button button4\">Festlegen</button></a>");
-						client.println("<br>Aktueller Wert -> " + (String)getLightSensorValue() + "</p>");
+						// Input room name
+						client.println("<p>Name des Raums eingeben:</p>");
+						client.print("<form method='get' action='a'>");
+						client.print("<input name='room_name' length=11>&nbsp;");
+						client.print("<input type='submit' class='send' value='OK'><br>");
+						client.print("</form>");
 
-						client.println("</fieldset>");
+						// Input Temperatur Offset
+						client.println("<p>Temperaturoffset eingeben:</p>");
+						client.print("<form method='get' action='a'>");
+						client.print("<input name='room_name' length=11>&nbsp;");
+						client.print("<input type='submit' class='send' value='OK'><br><br>(Dezimalzahl mit Punkt, z.B. 2.6)<br>");
+						client.print("</form>");
+
+						// Input Device Name
+						client.println("<p>Gerätename eingeben:</p>");
+						client.print("<form method='get' action='a'>");
+						client.print("<input name='device_name' length=11>&nbsp;");
+						client.print("<input type='submit' class='send' value='OK'><br>");
+						client.print("</form>");
+						client.println("</fieldset><br>");
 
 						//Misc functions
 						client.println("<br><fieldset>");
 						client.println("<legend>Weitere Funktionen</legend>");
 
-						//Toggle Softtouch
-						client.println("<p>Touch-Button:</p>");
-						if(enableTouch) client.println("<p><a href=\"/toggle_touch\"><button class=\"button button3\">Touch-Button ausschalten</button></a></p>");
-						else client.println("<p><a href=\"/toggle_touch\"><button class=\"button button4\">Touch-Button einschalten</button></a></p>");
-
-						//Toggle time sync state
-						client.println("<p>Automatische Zeitsynchronisation:</p>");
-						if(enableTimeSync) client.println("<p><a href=\"/toggle_timesync\"><button class=\"button button3\">Zeitsync. ausschalten</button></a></p>");
-						else client.println("<p><a href=\"/toggle_timesync\"><button class=\"button button4\">Zeitsync. einschalten</button></a></p>");
-
 						//Send recovery link
-						client.println("<br><p><a href=\"/get_recoverylink\" target=\"_blank\"><button class=\"button button4\">Recovery-Link erzeugen</button></a></p>");
+						client.println("<p><a href=\"/get_recoverylink\" target=\"_blank\"><button class=\"button button4\">Recovery-Link erzeugen</button></a></p>");
 
 						//Show debug information
 						client.println("<p><a href=\"/get_debugdata\" target=\"_blank\"><button class=\"button button4\">Statusinfos anzeigen</button></a></p>");
@@ -1240,103 +1087,117 @@ void wifiConnectedHandle(WiFiClient client){
 						client.println();
 						break;
 
-					}else if (header.startsWith("GET /a?color=")) {
-						String color,tmp;
-						tmp = header.substring(0,header.indexOf("\n"));
-						color = tmp.substring(13, tmp.lastIndexOf(' '));
-
-						color.replace("%2C",",");
-
-						if (color.indexOf(",") >= 0){
-							//If RGB value input
-							mode = "RGB_ALL " + color;
-						}
-						else{
-							//If Kelvin value input
-							mode = "SET_COLORTEMP " + color;
-						}
+					}else if (header.indexOf("GET /toggle_mqtt") >= 0) {
+						// Toggle MQTT functionality
+						mode = "TOGGLE_MQTT";
 						execControlSwitch = true;
 						refreshPage = true;
 
-					}else if (header.startsWith("GET /a?color_bl=")) {
-						String color,tmp;
+					}else if (header.indexOf("GET /toggle_owm") >= 0) {
+						// Toggle openweathermap data
+						mode = "TOGGLE_OWM";
+						execControlSwitch = true;
+						refreshPage = true;
+
+					}else if (header.startsWith("GET /a?mqtt_conn=")) {
+						// Get MQTT connection settings
+						String param,tmp;
 						tmp = header.substring(0,header.indexOf("\n"));
-						color = tmp.substring(16, tmp.lastIndexOf(' '));
+						param = tmp.substring(13, tmp.lastIndexOf(' '));
 
-						color.replace("%2C",",");
+						param.replace("%2C",",");
 
-						if (color.indexOf(",") >= 0){
-							//If RGB value input
-							mode = "SET_BACKLIGHTMODE_MANUAL " + color;
+						if (param.indexOf(",") >= 0){
+							mode = "SET_MQTT_CONNECTION " + param;
 						}
 						execControlSwitch = true;
 						refreshPage = true;
 
-					}else if (header.startsWith("GET /a?color_min=")) {
-						String color,tmp;
+					}else if (header.startsWith("GET /a?mqtt_user=")) {
+						// Get MQTT broker credentials
+						String param,tmp;
 						tmp = header.substring(0,header.indexOf("\n"));
-						color = tmp.substring(17, tmp.lastIndexOf(' '));
+						param = tmp.substring(13, tmp.lastIndexOf(' '));
 
-						color.replace("%2C",",");
+						param.replace("%2C",",");
 
-						if (color.indexOf(",") >= 0){
-							//If RGB value input
-							mode = "SET_MINUTES_DISPLAY_COLOR " + color;
+						if (param.indexOf(",") >= 0){
+							mode = "SET_MQTT_CREDENTIALS " + param;
 						}
 						execControlSwitch = true;
 						refreshPage = true;
 
-					}else if (header.startsWith("GET /a?time=")) {
-						String time,tmp;
+					}else if (header.startsWith("GET /a?mqtt_topic=")) {
+						// Get MQTT sending topic
+						String param,tmp;
 						tmp = header.substring(0,header.indexOf("\n"));
-						time = tmp.substring(12, tmp.lastIndexOf(' '));
+						param = tmp.substring(13, tmp.lastIndexOf(' '));
 
-						time.replace("%2D","-");
+						param.replace("%2C",",");
+						mode = "SET_MQTT_SEND_TOPIC " + param;
 
-						if (time.indexOf("-") >= 0){
-							//If RGB value input
-							mode = "SET_TIME " + time;
+						execControlSwitch = true;
+						refreshPage = true;
+
+					}else if (header.startsWith("GET /a?owm_key=")) {
+						// Get Openweathermap API Key
+						String param,tmp;
+						tmp = header.substring(0,header.indexOf("\n"));
+						param = tmp.substring(13, tmp.lastIndexOf(' '));
+
+						param.replace("%2C",",");
+						mode = "SET_OWM_KEY " + param;
+
+						execControlSwitch = true;
+						refreshPage = true;
+
+					}else if (header.startsWith("GET /a?owm_location=")) {
+						// Get Openweathermap location longitude, latitude
+						String param,tmp;
+						tmp = header.substring(0,header.indexOf("\n"));
+						param = tmp.substring(13, tmp.lastIndexOf(' '));
+
+						param.replace("%2C",",");
+
+						if (param.indexOf(",") >= 0){
+							mode = "SET_OWM_LON_LAT " + param;
 						}
+
 						execControlSwitch = true;
 						refreshPage = true;
 
-					}else if (header.indexOf("GET /set_lightlevel_act") >= 0) {
-						//Set standby mode off
-						mode = "SET_LIGHTLEVEL_ACTUAL";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /set_color_auto_daylight") >= 0) {
-						//Set daylight color on
-						mode = "SET_COLORMODE_AUTO_DAYLIGHT";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /set_brightness_auto") >= 0) {
-						//Set brightness automatically adjusted
-						mode = "SET_BRIGHTNESS_AUTO";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.startsWith("GET /a?brightness=")) {
-						String brightness,tmp;
+					}else if (header.startsWith("GET /a?room_name=")) {
+						// Get name of the actual room
+						String param,tmp;
 						tmp = header.substring(0,header.indexOf("\n"));
-						brightness = tmp.substring(18, tmp.lastIndexOf(' '));
+						param = tmp.substring(13, tmp.lastIndexOf(' '));
 
-						brightness = (String)(map(brightness.toInt(),5,100,40,255));
-
-						mode = "SET_BRIGHTNESS " + brightness;
-						//Log_println(mode);
+						param.replace("%2C",",");
+						mode = "SET_ROOM_NAME " + param;
 
 						execControlSwitch = true;
 						refreshPage = true;
 
-					}else if (header.startsWith("GET /a?set_devicename=")) {
-						String deviceName,tmp;
+					}else if (header.startsWith("GET /a?temp_offset=")) {
+						// Get temperature correction offset
+						String param,tmp;
 						tmp = header.substring(0,header.indexOf("\n"));
-						deviceName = tmp.substring(22, tmp.lastIndexOf(' '));
+						param = tmp.substring(13, tmp.lastIndexOf(' '));
 
-						mode = "SET_DEVICENAME " + deviceName;
+						param.replace("%2C",",");
+						mode = "SET_TEMP_OFFSET " + param;
+
+						execControlSwitch = true;
+						refreshPage = true;
+
+					}else if (header.startsWith("GET /a?device_name=")) {
+						// Get the devicename
+						String param,tmp;
+						tmp = header.substring(0,header.indexOf("\n"));
+						param = tmp.substring(13, tmp.lastIndexOf(' '));
+
+						param.replace("%2C",",");
+						mode = "SET_DEVICENAME " + param;
 
 						execControlSwitch = true;
 						refreshPage = true;
@@ -1352,7 +1213,7 @@ void wifiConnectedHandle(WiFiClient client){
 						// CSS to style the on/off buttons
 						// Feel free to change the background-color and font-size attributes to fit your preferences
 						client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}");
-						client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;");
+						client.println(".button { background-color: #008CC2; border: none; color: white; padding: 16px 40px;");
 						client.println("text-decoration: none; font-size: 25px; margin: 2px; cursor: pointer;}");
 						client.println(".button2 {background-color: #555555;}");
 						client.println(".button3 {font-size: 20px;}");
@@ -1361,45 +1222,9 @@ void wifiConnectedHandle(WiFiClient client){
 						// Web Page Heading
 						client.println("<body><h1>Statusinformationen</h1>");
 
-
-						// Display current state of wordclock
+						// Display current state of airquality monitor
 						client.println("<p>Folgende Werte konnten ausgelesen werden:</p>");
 						client.println("<p>" + getDebugData() + "</p>");
-
-						client.println("<br><br><br><br><br>");
-
-						client.println("</body></html>");
-						client.println();
-
-						break;
-
-					}else if (header.indexOf("GET /presentation") >= 0) {
-						//Set daylight color on
-						String confString = getConfig();
-
-						// Display the HTML web page
-						client.println("<!DOCTYPE html><html>");
-						client.println("<head><meta charset=\"utf-8\" name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-						client.println("<link rel=\"icon\" href=\"data:,\">");
-						// CSS to style the on/off buttons
-						// Feel free to change the background-color and font-size attributes to fit your preferences
-						client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}");
-						client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;");
-						client.println("text-decoration: none; font-size: 25px; margin: 2px; cursor: pointer;}");
-						client.println(".button2 {background-color: #555555;}");
-						client.println(".button3 {font-size: 20px;}");
-						client.println(".button4 {font-size: 20px; background-color: #555555;}</style></head>");
-
-						// Web Page Heading
-						client.println("<body><h1>Grafik anzeigen</h1>");
-
-						client.println("<p><a href=\"http://" + deviceIP + "/\"><button class=\"button button4\">Zurück zum Hauptmenü</button></a></p>");
-
-						// Display current state of wordclock
-						client.println("<p>Anzeige wählen:</p>");
-						client.println("<p><a href=\"/presentation_xmastree\"><button class=\"button button3\">Weihnachtsbaum</button></a></p><br>");
-						//Template
-						//client.println("<p><a href=\"/presentation_xyz\"><button class=\"button button4\">Neuer Modus</button></a></p><br>");
 
 						client.println("<br><br><br><br><br>");
 
@@ -1419,19 +1244,18 @@ void wifiConnectedHandle(WiFiClient client){
 						// CSS to style the on/off buttons
 						// Feel free to change the background-color and font-size attributes to fit your preferences
 						client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}");
-						client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;");
+						client.println(".button { background-color: #008CC2; border: none; color: white; padding: 16px 40px;");
 						client.println("text-decoration: none; font-size: 25px; margin: 2px; cursor: pointer;}");
-						client.println(".button2 {background-color: #555555;}");
+						client.println(".button2 {background-color: #008CC2;}");
 						client.println(".button3 {font-size: 20px;}");
 						client.println(".button4 {font-size: 20px; background-color: #555555;}</style></head>");
 
 						// Web Page Heading
 						client.println("<body><h1>Wiederherstellungslink</h1>");
 
-
 						// Display current state of wordclock
 						client.println("<p>Der Wiederherstellungslink für die aktuelle Konfiguration ist:</p>");
-						client.println("<p>http://wordclock.local/a?recovery=" + confString + "</p><br>");
+						client.println("<p>http://airquality.local/a?recovery=" + confString + "</p><br>");
 						client.println("<p>Hinweis: WiFi Konfigurationsdaten werden nicht übertragen und müssen nach der Wiederherstellung erneut eingegeben werden.</p>");
 
 						client.println("<br><br><br><br><br>");
@@ -1452,29 +1276,6 @@ void wifiConnectedHandle(WiFiClient client){
 
 						execControlSwitch = true;
 
-					}else if (header.indexOf("GET /toggle_summertime") >= 0) {
-						//Set standby mode off
-						mode = "TOGGLE_SUMMERTIME";
-						execControlSwitch = true;
-						refreshPage = true;
-
-					}else if (header.indexOf("GET /toggle_summertime_marker") >= 0) {
-						//Set standby mode off
-						mode = "TOGGLE_SUMMERTIME_MARKER";
-						controlSwitch();
-
-						// Display the HTML web page
-						client.println("<!DOCTYPE html><html>");
-						client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
-						client.println("<link rel=\"icon\" href=\"data:,\">");
-						if(isSummertime) client.println("Marker auf Sommerzeit umgestellt.");
-						else client.println("Marker auf Winterzeit umgestellt.");
-						client.println("</body></html>");
-
-						// The HTTP response ends with another blank line
-						client.println();
-
-						break;
 					}
 
 					if(execControlSwitch) controlSwitch();
@@ -1491,7 +1292,7 @@ void wifiConnectedHandle(WiFiClient client){
 					// CSS to style the on/off buttons
 					// Feel free to change the background-color and font-size attributes to fit your preferences
 					client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
-					client.println(".button { background-color: #4CAF50; border: none; color: white; padding: 16px 40px;");
+					client.println(".button { background-color: #008CC2; border: none; color: white; padding: 16px 40px;");
 					client.println("text-decoration: none; font-size: 25px; margin: 2px; cursor: pointer;}");
 					client.println(".button2 {background-color: #555555;}");
 					client.println(".button3 {font-size: 20px;}");
@@ -1499,78 +1300,66 @@ void wifiConnectedHandle(WiFiClient client){
 					client.println(".button4 {font-size: 20px; background-color: #555555;}</style></head>");
 
 					// Web Page Heading
-					client.println("<body><h1>Wordclock<br>Konfiguration</h1>");
+					client.println("<body><h1>Airquality<br>Monitor</h1>");
+
+					// Display some values
+					client.println("<p>Temperatur innen:  " + String(outputTemp,2) + " °C </p>");
+					client.println("<p>Luftfeuchtigkeit innen:  " + String(outputHumidity,2) + " % </p>");
+					client.println("<p>Temperatur außen:  " + String(temp_out.toFloat(),2) + " °C </p>");
+					client.println("<p>Luftqualität außen:  " + String(aqi_out.toInt()) + "</p>");
+					client.println("<p>Luftfeuchtigkeit außen:  " + String(humidity_out.toFloat(),2) + " % </p>");
+					client.println("<p>Lufdruck:  " + String(outputPressure,2) + " hPa </p>");
+					client.println("<p><br><u>Weitere Werte:</u></p>");
+					client.println("<p>Bodenozon (O3):  " + String(o3_out.toFloat(),2) + " ug/m^3 </p>");
+					client.println("<p>Stickoxid (NO2):  " + String(no2_out.toFloat(),2) + " ug/m^3 </p>");
+					client.println("<p>Pollen (Pm10):  " + String(pm10_out.toFloat(),2) + " ug/m^3 </p>");
 
 
-					// Display current state of wordclock
-					client.println("<p>Status Wordclock: " + (String) ((!forceStandby) ? "Eingeschaltet" : "Standby") + "</p>");
-					// If the output26State is off, it displays the ON button
-					if (!forceStandby) {
-						client.println("<p><a href=\"/go_sleep\"><button class=\"button\">In Standby wechseln</button></a></p>");
+
+					// Display current state of venting
+					client.println("<p><br>Lüftungsstatus aktuell: " + (String) ((ventingActive) ? "Fenster geöffnet" : "Fenster geschlossen") + "</p>");
+
+					if (ventingActive) {
+						client.println("<p><a href=\"/toggle_venting\"><button class=\"button\">Schließen</button></a></p>");
 					} else {
-						client.println("<p><a href=\"/go_wake\"><button class=\"button button2\">Einschalten</button></a></p>");
+						client.println("<p><a href=\"/toggle_venting\"><button class=\"button button2\">Öffnen</button></a></p>");
 					}
 
 
 
 					// Display current state of backlight
-					client.println("<p>Status Backlight: " + (String) ((enableBacklight) ? "Eingeschaltet" : "Ausgeschaltet") + "</p>");
-					// If the output26State is off, it displays the ON button
-					if (!enableBacklight) {
-						client.println("<p><a href=\"/toggle_backlight\"><button class=\"button button2\">Einschalten</button></a></p>");
+					client.println("<p>LED-Anzeige ein/ausschalten</p>");
+
+					if (ledsEnabled) {
+						client.println("<p><a href=\"/toggle_leds\"><button class=\"button button2\">Ausschalten</button></a></p>");
 					} else {
-						client.println("<p><a href=\"/toggle_backlight\"><button class=\"button\">Ausschalten</button></a></p><br>");
+						client.println("<p><a href=\"/toggle_leds\"><button class=\"button\">Einschalten</button></a></p><br>");
 					}
-
-					//client.println("<hr class=\"striped-border\" />");
-					//client.println("---------------------------------------------------------------------------------");
-
-					// Display current mode of backlight
-					client.println("<p>Backlight Modus einstellen:</p>");
-
-					// Display buttons for BL mode change
-					if(backlightMode.equals("rainbow") && enableBacklight) client.println("<p><a href=\"/set_backlight_rainbow\"><button class=\"button\">Farbwechsel</button></a></p>");
-					else client.println("<p><a href=\"/set_backlight_rainbow\"><button class=\"button button2\">Farbwechsel</button></a></p>");
-
-					if(backlightMode.equals("daylight") && enableBacklight) client.println("<p><a href=\"/set_backlight_daylight\"><button class=\"button\">Tageslichtabh. Farbe</button></a></p>");
-					else client.println("<p><a href=\"/set_backlight_daylight\"><button class=\"button button2\">Tageslichtabh. Farbe</button></a></p>");
-
-					client.println("<p><a href=\"/set_backlight_freeze\"><button class=\"button button2\">Aktuelle Farbe verwenden</button></a></p>");
-
-					client.println("<p>'Es ist' und 'Uhr' einstellen:</p>");
-					if(activateSec1) client.println("<p><a href=\"/toggle_sec1\"><button class=\"button\">'Es ist' ausschalten</button></a></p>");
-					else client.println("<p><a href=\"/toggle_sec1\"><button class=\"button button2\">'Es ist' einschalten</button></a></p>");
-
-					if(activateSec3) client.println("<p><a href=\"/toggle_sec3\"><button class=\"button\">'Uhr' ausschalten</button></a></p>");
-					else client.println("<p><a href=\"/toggle_sec3\"><button class=\"button button2\">'Uhr' einschalten</button></a></p>");
 
 
 					//Change Standby mode
-					client.println("<p>Anzeige im Standby-Modus:</p>");
-					if(standbyMode.equals("JUS")) client.println("<p><a href=\"/set_standby_jus\"><button class=\"button button3\">JUS</button></a>&nbsp;");
-					else client.println("<p><a href=\"/set_standby_jus\"><button class=\"button button4\">JUS</button></a>&nbsp;");
+					client.println("<p>Ampel schalten nach Messwert:</p>");
+					if(displayMode.equals("iaq")) client.println("<p><a href=\"/set_display_iaq\"><button class=\"button button3\">IAQ</button></a>&nbsp;");
+					else client.println("<p><a href=\"/set_display_iaq\"><button class=\"button button4\">IAQ</button></a>&nbsp;");
 
-					if(standbyMode.equals("CHE")) client.println("<a href=\"/set_standby_che\"><button class=\"button button3\">CHE</button></a></p>");
-					else client.println("<a href=\"/set_standby_che\"><button class=\"button button4\">CHE</button></a></p>");
+					if(displayMode.equals("co2")) client.println("<a href=\"/set_display_co2\"><button class=\"button button3\">CO2</button></a></p>");
+					else client.println("<a href=\"/set_display_co2\"><button class=\"button button4\">CO2</button></a></p>");
+					
+					if (enableOwmData){
+						if(displayMode.equals("o3")) client.println("<p><a href=\"/set_display_o3\"><button class=\"button button3\">Ozonn</button></a>&nbsp;");
+						else client.println("<p><a href=\"/set_display_o3\"><button class=\"button button4\">Ozon</button></a>&nbsp;");
 
-					if(standbyMode.equals("TWINKLE")) client.println("<p><a href=\"/set_standby_twinkle\"><button class=\"button button3\">Blinken</button></a>&nbsp;");
-					else client.println("<p><a href=\"/set_standby_twinkle\"><button class=\"button button4\">Blinken</button></a>&nbsp;");
+						if(displayMode.equals("pm10")) client.println("<a href=\"/set_display_pm10\"><button class=\"button button3\">Pollen</button></a></p>");
+						else client.println("<a href=\"/set_display_pm10\"><button class=\"button button4\">Pollen</button></a></p>");
+					}
+					
+					client.println("<p>(derzeit nur IAQ implementiert)</p>");
 
-					//if(standbyMode.equals("XMASTREE")) client.println("<a href=\"/set_standby_xmastree\"><button class=\"button button3\">Weihnachtsbaum</button></a></p>");
-					//else client.println("<a href=\"/set_standby_xmastree\"><button class=\"button button4\">Weihnachtsbaum</button></a></p>");
-
-					if(standbyMode.equals("NULL")) client.println("<a href=\"/set_standby_null\"><button class=\"button button3\">Aus</button></a></p>");
-					else client.println("<a href=\"/set_standby_null\"><button class=\"button button4\">Aus</button></a></p><br>");
-
-					//client.println("<hr class=\"striped-border\" />");
-					//client.println("---------------------------------------------------------------------------------");
-
-					client.println("<p><a href=\"/presentation\"><button class=\"button button4\">Grafik anzeigen</button></a></p><br>");
-					client.println("<p><a href=\"/settings\"><button class=\"button button4\">Weitere Einstellungen</button></a></p><br>");
-					//client.println("<p><a href=\"/clock_restart\"><button class=\"button button4\">Uhr neustarten</button></a></p><br>");
+					client.println("<p><br><a href=\"/settings\"><button class=\"button button4\">Einstellungen</button></a></p><br>");
 
 					//Display firmware Version
 					client.println("<br><br><p>WiFi Signalqualität: " + (String)(int)getWifiSignalStrength() + "%</p>");
+					if (mqttEnabled && mqttConnected)client.println("<p>Sendet auf MQTT Topic: " + mqttClientName + "/" + mqttSendTopic + "</p><br>");
 					client.println("<p>Firmwareversion: " + String(SW_VERSION) + "</p><br>");
 
 					client.println("</body></html>");
@@ -1597,8 +1386,6 @@ void wifiConnectedHandle(WiFiClient client){
 
 	//Log_println("Client disconnected.");
 	//Log_println("");
-
-	*/
 }
 
 bool readConfigFromFlash(){
@@ -1946,14 +1733,14 @@ void errLeds(void)
 }
 
 void reconnectMqttClient(void) {
-  Log_println("Connection to MQTT broker lost, attempting reconnect...");
+  // Log_println("Connection to MQTT broker lost, attempting reconnect...");
   // Attempt to connect
   if (!mqttClient.connected()) {
     if (mqttClient.connect("ESP32Client")) {
       Log_println("Reconnected to broker");
       mqttConnected = true;
     } else {
-      Log_println("Reconnect to broker failed with state: rc=" + mqttClient.state());
+      // Log_println("Reconnect to broker failed with state: rc=" + mqttClient.state());
     }
   } else {
     mqttConnected = true;
@@ -2078,6 +1865,7 @@ void sendMqttData(void)
   doc["co2_eq"] = outputCo2;
   doc["voc_eq"] = outputVocEquiv;
   doc["room"] = mqttMetaRoomName;
+  doc["venting"] = (String)((String)ventingActive).toInt();
   if (enableOwmData) {
 	doc["temp_out"] = temp_out.toFloat();
 	doc["humidity_out"] = humidity_out.toFloat();
