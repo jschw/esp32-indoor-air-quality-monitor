@@ -26,8 +26,8 @@ CRGB leds[NUM_LEDS];
 
 // === Settings for color mapping ===
 // Min/Max color mapped value
-int min_color_mapped = 96;
-int max_color_mapped = 25;
+int min_color_mapped = 96; // = green
+int max_color_mapped = 0; // = red
 // Min/Max input values for mapping
 int min_input_mapping = 0;
 int max_input_mapping = 250;
@@ -1289,6 +1289,44 @@ void wifiConnectedHandle(WiFiClient client){
 					if(refreshPage) client.println("<meta http-equiv=\"refresh\" content=\"" + waitRefresh + ";url=http://" + deviceIP + "/\" />");
 					refreshPage = false;
 					client.println("<link rel=\"icon\" href=\"data:,\">");
+					// Set colors for aqi and co2
+					String colorAqiIn, colorAqiOut, colorCo2in;
+					// IAQ
+					if (outputIaq <= 100) colorAqiIn = "#14DC14"; // green
+					else if (outputIaq > 100 && outputIaq <= 200) colorAqiIn = "#FAF01E"; // yellow
+					else colorAqiIn = "#DC1414"; //red
+					// IAQ out
+					if (aqi_out.toInt() == 1 || aqi_out.toInt() == 2) colorAqiOut = "#14DC14"; // green
+					else if (aqi_out.toInt() == 3) colorAqiOut = "#FAF01E"; // yellow
+					else colorAqiOut = "#DC1414"; //red
+					// IAQ out
+					if (outputCo2 <= 550) colorCo2in = "#14DC14"; // green
+					else if (outputCo2 > 550 && outputCo2 < 800) colorCo2in = "#FAF01E"; // yellow
+					else colorCo2in = "#DC1414"; //red
+					
+					
+					// CSS code for card style design
+					client.println("<link rel=\"stylesheet\" href=\"https://use.fontawesome.com/releases/v5.7.2/css/all.css\" integrity=\"sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr\" crossorigin=\"anonymous\">");
+  					client.println("<link rel=\"icon\" href=\"data:,\">");
+					client.println("<style>");
+    				client.println("html {font-family: Arial; display: inline-block; text-align: center;}");
+    				client.println("p {  font-size: 1.2rem;}");
+    				client.println("body {  margin: 0;}");
+    				client.println(".topnav { overflow: hidden; background-color: #008CC2; color: white; font-size: 1.2rem; }");
+    				client.println(".content { padding: 20px; }");
+    				client.println(".card { background-color: white; box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5); }");
+    				client.println(".cards { max-width: 700px; margin: 0 auto; display: grid; grid-gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }");
+    				client.println(".reading { font-size: 2.8rem; }");
+    				// client.println(".card.temperature { color: #0e7c7b; }");
+					client.println(".card.temperature { color: #008CC2; }");
+    				// client.println(".card.humidity { color: #17bebb; }");
+					client.println(".card.humidity { color: #008CC2; }");
+    				client.println(".card.pressure { color: #3fca6b; }");
+    				client.println(".card.gas { color: #d62246; }");
+					client.println(".card.aqii { color: " + colorAqiIn + "; }");
+					client.println(".card.aqia { color: " + colorAqiOut + "; }");
+					client.println(".card.co2i { color: " + colorCo2in + "; }");
+  					client.println("</style>");
 					// CSS to style the on/off buttons
 					// Feel free to change the background-color and font-size attributes to fit your preferences
 					client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
@@ -1300,16 +1338,29 @@ void wifiConnectedHandle(WiFiClient client){
 					client.println(".button4 {font-size: 20px; background-color: #555555;}</style></head>");
 
 					// Web Page Heading
-					client.println("<body><h1>Airquality<br>Monitor</h1>");
+					//client.println("<body><h1>Airquality<br>Monitor</h1>");
+					client.println("<div class=\"topnav\"><h3>Airquality Monitor</h3></div>");
+
+					client.println("<div class=\"content\"><div class=\"cards\">");
+					client.println("<div class=\"card aqii\"><h4><i class=\"fas fa-wind\"></i> AQI INNEN</h4><p><span class=\"reading\"><span id=\"gas\">" + String(outputIaq,2) + "</span> </span></p></div>");
+      				client.println("<div class=\"card temperature\"><h4><i class=\"fas fa-thermometer-half\"></i> TEMPERATUR INNEN</h4><p><span class=\"reading\"><span id=\"temp\">" + String(outputTemp,2) + "</span> &deg;C</span></p></div>");
+					client.println("<div class=\"card co2i\"><h4><i class=\"fas fa-wind\"></i> CO2 INNEN</h4><p><span class=\"reading\"><span id=\"gas\">" + String(outputCo2,2) + "</span> </span></p></div>");
+      				client.println("<div class=\"card humidity\"><h4><i class=\"fas fa-tint\"></i> LUFTFEUCHTIGKEIT INNEN</h4><p><span class=\"reading\"><span id=\"hum\">" + String(outputHumidity,2) + "</span> &percnt;</span></p></div>");
+					client.println("<div class=\"card temperature\"><h4><i class=\"fas fa-thermometer-half\"></i> TEMPERATUR AUSSEN</h4><p><span class=\"reading\"><span id=\"temp\">" + String(temp_out.toFloat(),2) + "</span> &deg;C</span></p></div>");
+      				client.println("<div class=\"card aqia\"><h4><i class=\"fas fa-wind\"></i> AQI AUSSEN </h4><p><span class=\"reading\"><span id=\"gas\">" + String(aqi_out.toInt()) + "</span> </span></p></div>");
+    				client.println("</div></div>");
 
 					// Display some values
+					/*
 					client.println("<p>Temperatur innen:  " + String(outputTemp,2) + " °C </p>");
 					client.println("<p>Luftfeuchtigkeit innen:  " + String(outputHumidity,2) + " % </p>");
 					client.println("<p>Temperatur außen:  " + String(temp_out.toFloat(),2) + " °C </p>");
 					client.println("<p>Luftqualität außen:  " + String(aqi_out.toInt()) + "</p>");
+					*/
+					
+					client.println("<p><br><u>Weitere Werte:</u></p>");
 					client.println("<p>Luftfeuchtigkeit außen:  " + String(humidity_out.toFloat(),2) + " % </p>");
 					client.println("<p>Lufdruck:  " + String(outputPressure,2) + " hPa </p>");
-					client.println("<p><br><u>Weitere Werte:</u></p>");
 					client.println("<p>Bodenozon (O3):  " + String(o3_out.toFloat(),2) + " ug/m^3 </p>");
 					client.println("<p>Stickoxid (NO2):  " + String(no2_out.toFloat(),2) + " ug/m^3 </p>");
 					client.println("<p>Pollen (Pm10):  " + String(pm10_out.toFloat(),2) + " ug/m^3 </p>");
@@ -1330,10 +1381,10 @@ void wifiConnectedHandle(WiFiClient client){
 					// Display current state of backlight
 					client.println("<p>LED-Anzeige ein/ausschalten</p>");
 
-					if (ledsEnabled) {
-						client.println("<p><a href=\"/toggle_leds\"><button class=\"button button2\">Ausschalten</button></a></p>");
+					if (!ledsEnabled) {
+						client.println("<p><a href=\"/toggle_leds\"><button class=\"button button2\">Einschalten</button></a></p>");
 					} else {
-						client.println("<p><a href=\"/toggle_leds\"><button class=\"button\">Einschalten</button></a></p><br>");
+						client.println("<p><a href=\"/toggle_leds\"><button class=\"button\">Ausschalten</button></a></p><br>");
 					}
 
 
@@ -1825,11 +1876,11 @@ void bsecCallback(const bme68x_data& input, const BsecOutput& outputs)
   // -> Avoid bouncing between two states
   if (abs(hueVal - lastChangeHueValue) >= stateChangeHysteresis) {
     // Determine which LED should be turned on
-    if (hueVal >= 64) {
+    if (hueVal >= 75) {
       // State: Good -> Green
       airQualityState = 2;
     }
-    else if (hueVal < 64 && hueVal >= 32) {
+    else if (hueVal < 75 && hueVal >= 32) {
       // State: Quite good -> Yellow
       airQualityState = 1;
     }
@@ -1843,9 +1894,11 @@ void bsecCallback(const bme68x_data& input, const BsecOutput& outputs)
   }
   
   // Set LED color
-  leds[airQualityState] = CHSV(hueVal, satVal, valVal);
-  FastLED.setBrightness(brightness);
-  FastLED.show();
+  if (ledsEnabled) {
+	leds[airQualityState] = CHSV(hueVal, satVal, valVal);
+	FastLED.setBrightness(brightness);
+	FastLED.show();
+  }
 
   if (mqttConnected)
     sendMqttData();
@@ -1865,7 +1918,7 @@ void sendMqttData(void)
   doc["co2_eq"] = outputCo2;
   doc["voc_eq"] = outputVocEquiv;
   doc["room"] = mqttMetaRoomName;
-  doc["venting"] = (String)((String)ventingActive).toInt();
+  doc["venting"] = ((String)ventingActive).toInt();
   if (enableOwmData) {
 	doc["temp_out"] = temp_out.toFloat();
 	doc["humidity_out"] = humidity_out.toFloat();
