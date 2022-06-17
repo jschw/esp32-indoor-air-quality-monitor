@@ -1360,7 +1360,7 @@ void wifiConnectedHandle(WiFiClient client){
 					
 					client.println("<p><br><u>Weitere Werte:</u></p>");
 					client.println("<p>Luftfeuchtigkeit außen:  " + String(humidity_out.toFloat(),2) + " % </p>");
-					client.println("<p>Lufdruck:  " + String(outputPressure,2) + " hPa </p>");
+					client.println("<p>Luftdruck:  " + String(outputPressure,2) + " hPa </p>");
 					client.println("<p>Bodenozon (O3):  " + String(o3_out.toFloat(),2) + " ug/m^3 </p>");
 					client.println("<p>Stickoxid (NO2):  " + String(no2_out.toFloat(),2) + " ug/m^3 </p>");
 					client.println("<p>Pollen (Pm10):  " + String(pm10_out.toFloat(),2) + " ug/m^3 </p>");
