@@ -976,6 +976,23 @@ void wifiConnectedHandle(WiFiClient client){
 						client.println("<!DOCTYPE html><html>");
 						client.println("<head><meta charset=\"utf-8\" name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
 						client.println("<link rel=\"icon\" href=\"data:,\">");
+						// CSS code for card style design
+						client.println("<link rel=\"stylesheet\" href=\"https://use.fontawesome.com/releases/v5.7.2/css/all.css\" integrity=\"sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr\" crossorigin=\"anonymous\">");
+						client.println("<link rel=\"icon\" href=\"data:,\">");
+						client.println("<style>");
+						client.println("html {font-family: Arial; display: inline-block; text-align: center;}");
+						client.println("p {  font-size: 1.2rem;}");
+						client.println("body {  margin: 0;}");
+						client.println(".topnav { overflow: hidden; background-color: #008CC2; color: white; font-size: 1.2rem; }");
+						client.println(".content { padding: 20px; }");
+						client.println(".card { background-color: white; box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5); }");
+						client.println(".cards { max-width: 700px; margin: 0 auto; display: grid; grid-gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }");
+						client.println(".reading { font-size: 2.8rem; }");
+						client.println(".card.temperature { color: #008CC2; }");
+						client.println(".card.humidity { color: #008CC2; }");
+						client.println(".card.pressure { color: #3fca6b; }");
+						client.println(".card.gas { color: #d62246; }");
+						client.println("</style>");
 						// CSS to style the on/off buttons
 						client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
 						client.println(".button { background-color: #008CC2; border: none; color: white; padding: 16px 40px;");
@@ -988,7 +1005,7 @@ void wifiConnectedHandle(WiFiClient client){
 						client.println(".button4 {font-size: 20px; background-color: #555555;}</style></head>");
 
 						// Web Page Heading
-						client.println("<body><h1>Einstellungen</h1>");
+						client.println("<div class=\"topnav\"><h3>Einstellungen</h3></div>");
 
 
 						client.println("<p><a href=\"http://" + deviceIP + "/\"><button class=\"button button4\">Zurück zur Hauptseite</button></a></p>");
@@ -1018,7 +1035,7 @@ void wifiConnectedHandle(WiFiClient client){
 						client.println("<p>MQTT Topic (senden) eingeben:</p>");
 						client.print("<form method='get' action='a'>");
 						client.print("<input name='mqtt_topic' length=11>&nbsp;");
-						client.print("<input type='submit' class='send' value='OK'><br><br><b>Format: </b> Clientname,Username,Password<br>");
+						client.print("<input type='submit' class='send' value='OK'><br>");
 						client.print("</form>");
 						client.println("</fieldset><br>");
 
