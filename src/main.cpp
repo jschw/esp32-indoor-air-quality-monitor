@@ -163,6 +163,7 @@ float outputCo2;
 float outputVocEquiv;
 float outputIaq;
 float outputIaqAcc;
+float outputGasRes;
 
 int airQualityState = 0;  // 0 is first LED -> Red
 int lastChangeHueValue = 0;
@@ -176,12 +177,13 @@ void setup()
 
 	// Init the sensor interface
 	bsec_virtual_sensor_t sensorList[] = { 
-		BSEC_OUTPUT_RAW_TEMPERATURE,
+		BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
 		BSEC_OUTPUT_RAW_PRESSURE,
-		BSEC_OUTPUT_RAW_HUMIDITY,
+		BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
 		BSEC_OUTPUT_IAQ,
 		BSEC_OUTPUT_CO2_EQUIVALENT,
-		BSEC_OUTPUT_BREATH_VOC_EQUIVALENT
+		BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,
+		BSEC_OUTPUT_COMPENSATED_GAS
 	};
 
 	if(!bsecInst.begin(0x77, Wire) ||
@@ -926,7 +928,7 @@ double getWifiSignalStrength(){
 }
 
 void wifiConnectedHandle(WiFiClient client){
-	//Log_println("New Client.");
+	// Log_println("New Client.");
 	String currentLine = "";
 	bool execControlSwitch = false;
 	bool refreshPage = false;
@@ -935,7 +937,8 @@ void wifiConnectedHandle(WiFiClient client){
 	while (client.connected()) {
 		if (client.available()) {
 			char c = client.read();
-			//Serial.write(c);
+			// Debug write received http response
+			// Serial.write(c);
 			header += c;
 			if (c == '\n') {
 				// if the current line is blank, you got two newline characters in a row.
@@ -949,21 +952,21 @@ void wifiConnectedHandle(WiFiClient client){
 					client.println();
 
 
-					// handle the wordclock function based on header data
+					// handle the airquality monitor function based on header data
 					if (header.indexOf("GET /toggle_venting") >= 0) {
-						//Toggle Zustand Fenster
+						// Toggle Zustand Fenster
 						mode = "TOGGLE_VENTING_STATE";
 						execControlSwitch = true;
 						refreshPage = true;
 
 					}else if (header.indexOf("GET /toggle_wifi") >= 0) {
-						//Toggle WiFi
+						// Toggle WiFi
 						mode = "TOGGLE_WIFI";
 						execControlSwitch = true;
 						refreshPage = true;
 
 					}else if (header.indexOf("GET /toggle_leds") >= 0) {
-						//Toggle LEDs on/off
+						// Toggle LEDs on/off
 						mode = "TOGGLE_LEDS";
 						execControlSwitch = true;
 						refreshPage = true;
@@ -974,7 +977,6 @@ void wifiConnectedHandle(WiFiClient client){
 						client.println("<head><meta charset=\"utf-8\" name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
 						client.println("<link rel=\"icon\" href=\"data:,\">");
 						// CSS to style the on/off buttons
-						// Feel free to change the background-color and font-size attributes to fit your preferences
 						client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center;}");
 						client.println(".button { background-color: #008CC2; border: none; color: white; padding: 16px 40px;");
 						client.println("text-decoration: none; font-size: 30px; margin: 2px; cursor: pointer;}");
@@ -1211,7 +1213,6 @@ void wifiConnectedHandle(WiFiClient client){
 						client.println("<head><meta charset=\"utf-8\" name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
 						client.println("<link rel=\"icon\" href=\"data:,\">");
 						// CSS to style the on/off buttons
-						// Feel free to change the background-color and font-size attributes to fit your preferences
 						client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}");
 						client.println(".button { background-color: #008CC2; border: none; color: white; padding: 16px 40px;");
 						client.println("text-decoration: none; font-size: 25px; margin: 2px; cursor: pointer;}");
@@ -1242,7 +1243,6 @@ void wifiConnectedHandle(WiFiClient client){
 						client.println("<head><meta charset=\"utf-8\" name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
 						client.println("<link rel=\"icon\" href=\"data:,\">");
 						// CSS to style the on/off buttons
-						// Feel free to change the background-color and font-size attributes to fit your preferences
 						client.println("<style>html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: left;}");
 						client.println(".button { background-color: #008CC2; border: none; color: white; padding: 16px 40px;");
 						client.println("text-decoration: none; font-size: 25px; margin: 2px; cursor: pointer;}");
@@ -1317,9 +1317,7 @@ void wifiConnectedHandle(WiFiClient client){
     				client.println(".card { background-color: white; box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5); }");
     				client.println(".cards { max-width: 700px; margin: 0 auto; display: grid; grid-gap: 2rem; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }");
     				client.println(".reading { font-size: 2.8rem; }");
-    				// client.println(".card.temperature { color: #0e7c7b; }");
 					client.println(".card.temperature { color: #008CC2; }");
-    				// client.println(".card.humidity { color: #17bebb; }");
 					client.println(".card.humidity { color: #008CC2; }");
     				client.println(".card.pressure { color: #3fca6b; }");
     				client.println(".card.gas { color: #d62246; }");
@@ -1338,45 +1336,51 @@ void wifiConnectedHandle(WiFiClient client){
 					client.println(".button4 {font-size: 20px; background-color: #555555;}</style></head>");
 
 					// Web Page Heading
-					//client.println("<body><h1>Airquality<br>Monitor</h1>");
 					client.println("<div class=\"topnav\"><h3>Airquality Monitor</h3></div>");
 
 					client.println("<div class=\"content\"><div class=\"cards\">");
 					client.println("<div class=\"card aqii\"><h4><i class=\"fas fa-wind\"></i> AQI INNEN</h4><p><span class=\"reading\"><span id=\"gas\">" + String(outputIaq,2) + "</span> </span></p></div>");
       				client.println("<div class=\"card temperature\"><h4><i class=\"fas fa-thermometer-half\"></i> TEMPERATUR INNEN</h4><p><span class=\"reading\"><span id=\"temp\">" + String(outputTemp,2) + "</span> &deg;C</span></p></div>");
-					client.println("<div class=\"card co2i\"><h4><i class=\"fas fa-wind\"></i> CO2 INNEN</h4><p><span class=\"reading\"><span id=\"gas\">" + String(outputCo2,2) + "</span> </span></p></div>");
+					client.println("<div class=\"card co2i\"><h4><i class=\"fas fa-wind\"></i> CO2 INNEN</h4><p><span class=\"reading\"><span id=\"gas\">" + (String)(int)outputCo2 + "</span> ppm</span></p></div>");
       				client.println("<div class=\"card humidity\"><h4><i class=\"fas fa-tint\"></i> LUFTFEUCHTIGKEIT INNEN</h4><p><span class=\"reading\"><span id=\"hum\">" + String(outputHumidity,2) + "</span> &percnt;</span></p></div>");
 					client.println("<div class=\"card temperature\"><h4><i class=\"fas fa-thermometer-half\"></i> TEMPERATUR AUSSEN</h4><p><span class=\"reading\"><span id=\"temp\">" + String(temp_out.toFloat(),2) + "</span> &deg;C</span></p></div>");
       				client.println("<div class=\"card aqia\"><h4><i class=\"fas fa-wind\"></i> AQI AUSSEN </h4><p><span class=\"reading\"><span id=\"gas\">" + String(aqi_out.toInt()) + "</span> </span></p></div>");
     				client.println("</div></div>");
 
-					// Display some values
-					/*
-					client.println("<p>Temperatur innen:  " + String(outputTemp,2) + " °C </p>");
-					client.println("<p>Luftfeuchtigkeit innen:  " + String(outputHumidity,2) + " % </p>");
-					client.println("<p>Temperatur außen:  " + String(temp_out.toFloat(),2) + " °C </p>");
-					client.println("<p>Luftqualität außen:  " + String(aqi_out.toInt()) + "</p>");
-					*/
-					
+					// Display some additional values
+					// Set colors for ozone, nitrogen dioxide and pollen
+					String colorO3, colorNo2, colorPm10;
+					// Ozone
+					if (o3_out.toFloat() <= 120) colorO3 = "#14DC14"; // green
+					else if (o3_out.toFloat() > 120 && o3_out.toFloat() <= 180) colorO3 = "#FAF01E"; // yellow
+					else colorO3 = "#DC1414"; //red
+					// Nitrogen dioxide
+					if (no2_out.toFloat() <= 100) colorNo2 = "#14DC14"; // green
+					else if (no2_out.toFloat() > 100 && no2_out.toFloat() <= 200) colorNo2 = "#FAF01E"; // yellow
+					else colorNo2 = "#DC1414"; //red
+					// Pollen
+					if (pm10_out.toFloat() <= 50) colorPm10 = "#14DC14"; // green
+					else if (pm10_out.toFloat() > 50 && pm10_out.toFloat() <= 90) colorPm10 = "#FAF01E"; // yellow
+					else colorPm10 = "#DC1414"; //red
+					// Print to HTML page
 					client.println("<p><br><u>Weitere Werte:</u></p>");
 					client.println("<p>Luftfeuchtigkeit außen:  " + String(humidity_out.toFloat(),2) + " % </p>");
 					client.println("<p>Luftdruck:  " + String(outputPressure,2) + " hPa </p>");
-					client.println("<p>Bodenozon (O3):  " + String(o3_out.toFloat(),2) + " ug/m^3 </p>");
-					client.println("<p>Stickoxid (NO2):  " + String(no2_out.toFloat(),2) + " ug/m^3 </p>");
-					client.println("<p>Pollen (Pm10):  " + String(pm10_out.toFloat(),2) + " ug/m^3 </p>");
+					client.println("<p style=\"color:" + colorO3 + "\";>Bodenozon (O3):  " + String(o3_out.toFloat(),2) + " ug/m^3 </p>");
+					client.println("<p style=\"color:" + colorNo2 + "\";>Stickoxid (NO2):  " + String(no2_out.toFloat(),2) + " ug/m^3 </p>");
+					client.println("<p style=\"color:" + colorPm10 + "\";>Pollen (Pm10):  " + String(pm10_out.toFloat(),2) + " ug/m^3 </p>");
 
 
+					// Display current state of venting only if MQTT enabled & connected
+					if (mqttEnabled && mqttConnected) {
+						client.println("<p><br>Lüftungsstatus aktuell: " + (String) ((ventingActive) ? "Fenster geöffnet" : "Fenster geschlossen") + "</p>");
 
-					// Display current state of venting
-					client.println("<p><br>Lüftungsstatus aktuell: " + (String) ((ventingActive) ? "Fenster geöffnet" : "Fenster geschlossen") + "</p>");
-
-					if (ventingActive) {
-						client.println("<p><a href=\"/toggle_venting\"><button class=\"button\">Schließen</button></a></p>");
-					} else {
-						client.println("<p><a href=\"/toggle_venting\"><button class=\"button button2\">Öffnen</button></a></p>");
+						if (ventingActive) {
+							client.println("<p><a href=\"/toggle_venting\"><button class=\"button\">Schließen</button></a></p>");
+						} else {
+							client.println("<p><a href=\"/toggle_venting\"><button class=\"button button2\">Öffnen</button></a></p>");
+						}
 					}
-
-
 
 					// Display current state of backlight
 					client.println("<p>LED-Anzeige ein/ausschalten</p>");
@@ -1408,9 +1412,11 @@ void wifiConnectedHandle(WiFiClient client){
 
 					client.println("<p><br><a href=\"/settings\"><button class=\"button button4\">Einstellungen</button></a></p><br>");
 
-					//Display firmware Version
+					// Display WiFi signal strength
 					client.println("<br><br><p>WiFi Signalqualität: " + (String)(int)getWifiSignalStrength() + "%</p>");
+					// Display MQTT send topic if connected
 					if (mqttEnabled && mqttConnected)client.println("<p>Sendet auf MQTT Topic: " + mqttClientName + "/" + mqttSendTopic + "</p><br>");
+					// Display firmware Version
 					client.println("<p>Firmwareversion: " + String(SW_VERSION) + "</p><br>");
 
 					client.println("</body></html>");
@@ -1434,9 +1440,6 @@ void wifiConnectedHandle(WiFiClient client){
 	header = "";
 
 	client.stop();
-
-	//Log_println("Client disconnected.");
-	//Log_println("");
 }
 
 bool readConfigFromFlash(){
@@ -1833,7 +1836,7 @@ void bsecCallback(const bme68x_data& input, const BsecOutput& outputs)
         outputIaq = output.signal;
         outputIaqAcc = (int)output.accuracy;
         break;
-      case BSEC_OUTPUT_RAW_TEMPERATURE:
+      case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE:
         if(logBsecToSerial) Serial.println("\ttemperature = " + String(output.signal));
         outputTemp = output.signal + tempOffset;
         break;
@@ -1841,7 +1844,7 @@ void bsecCallback(const bme68x_data& input, const BsecOutput& outputs)
         if(logBsecToSerial) Serial.println("\tpressure = " + String(output.signal));
         outputPressure = output.signal;
         break;
-      case BSEC_OUTPUT_RAW_HUMIDITY:
+      case BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY:
         if(logBsecToSerial) Serial.println("\thumidity = " + String(output.signal));
         outputHumidity = output.signal;
         break;
@@ -1849,9 +1852,12 @@ void bsecCallback(const bme68x_data& input, const BsecOutput& outputs)
         if(logBsecToSerial) Serial.println("\tCO2 Equivalent = " + String(output.signal));
         outputCo2 = output.signal;
         break;
-        case BSEC_OUTPUT_BREATH_VOC_EQUIVALENT:
+      case BSEC_OUTPUT_BREATH_VOC_EQUIVALENT:
         if(logBsecToSerial) Serial.println("\tBreath VOC Equivalent = " + String(output.signal));
         outputVocEquiv = output.signal;
+	  case BSEC_OUTPUT_COMPENSATED_GAS:
+        if(logBsecToSerial) Serial.println("\tGas resistance = " + String(output.signal));
+        outputGasRes = output.signal;
         break;
       default:
         break;
@@ -1917,6 +1923,7 @@ void sendMqttData(void)
   doc["humidity"] = outputHumidity;
   doc["co2_eq"] = outputCo2;
   doc["voc_eq"] = outputVocEquiv;
+  doc["gas_res"] = outputGasRes;
   doc["room"] = mqttMetaRoomName;
   doc["venting"] = ((String)ventingActive).toInt();
   if (enableOwmData) {

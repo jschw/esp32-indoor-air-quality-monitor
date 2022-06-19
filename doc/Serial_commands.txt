@@ -2,11 +2,16 @@
 // SET_MQTT_CONNECTION IP,Port
 // SET_MQTT_CREDENTIALS Clientname,Username,Password
 // SET_MQTT_SEND_TOPIC Topic
+// SET_OWM_KEY xxxxx
+// SET_OWM_LON_LAT lon,lat
 // SET_ROOM_NAME room
+// SET_TEMP_OFFSET offset
 // TOGGLE_WIFI
 // TOGGLE_MQTT
+// TOGGLE_OWM
 // TOGGLE_LEDS
 // TOGGLE_BSEC_SERIAL_LOG
+// TOGGLE_VENT_STATE
 // SET_BRIGHTNESS 40 (values: 40-255)
 // SET_DEVICENAME NeuerName <- set the Wifi DNS name: http://devicename.local
 // SET_DEBUGMODE
