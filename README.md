@@ -5,9 +5,9 @@ This project can be used to hack the IKEA "VINDRIKTNING" air quality sensor to m
 
 <img src="doc/Airmonitor_Smartphone.jpg" width="500" height="auto">
 
-The data can be pushed directly via MQTT to InfluxDB and analysed later or just visualized:
+The data can be pushed directly via MQTT to InfluxDB and analysed later or just visualized (even on small tablets):
 
-<img src="doc/InfluxDB_Example.jpg" width="500" height="auto">
+<img src="doc/InfluxDB_Example.jpg" width="700" height="auto">
 
 
 ## Installation
