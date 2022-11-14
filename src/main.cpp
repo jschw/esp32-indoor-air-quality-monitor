@@ -102,11 +102,14 @@ String mqttMetaRoomName = "myroom";
 
 ////======Openweathermap functionality======
 bool enableOwmData = false;
+bool enableOwmMqtt = false;
 String owmApiKey = "";
 String longitude = "0.0";
 String latitude = "0.0";
 unsigned long lastTimeWeatherState = 0;
+unsigned long lastTimeVentingState = 0;
 unsigned long refreshWeatherInterval = 60000;
+unsigned long refreshVentStateInterval = 10000;
 String temp_out = "0.0";
 String humidity_out = "0.0";
 String windspeed_out = "0.0";
@@ -114,6 +117,11 @@ String aqi_out = "0.0";
 String no2_out = "0.0";
 String o3_out = "0.0";
 String pm10_out = "0.0";
+
+
+////======Venting state http call functionality======
+bool enableVentStApi = false;
+String ventStateApiUrl = "";
 
 
 void wifiStartAPmode();
@@ -137,6 +145,7 @@ void importConfig(String confStr);
 void Log_println(String msg, int loglevel=0); //<-- Wrapper function for logging class
 String httpGETRequest(const char* serverName);
 void refreshOpenweatherData();
+void refreshVentingStateFromUrl();
 
 //Config
 bool readConfigFromFlash();
@@ -288,6 +297,7 @@ void controlSwitch(){
 	// SET_MQTT_CONNECTION IP,Port
 	// SET_MQTT_CREDENTIALS Clientname,Username,Password
 	// SET_MQTT_SEND_TOPIC Topic
+	// SET_VENT_HTTP_URL url
 	// SET_OWM_KEY xxxxx
 	// SET_OWM_LON_LAT lon,lat
 	// SET_ROOM_NAME room
@@ -295,6 +305,8 @@ void controlSwitch(){
 	// TOGGLE_WIFI
 	// TOGGLE_MQTT
 	// TOGGLE_OWM
+	// TOGGLE_OWM_MQTT
+	// TOGGLE_VENT_STATE_HTTP
 	// TOGGLE_LEDS
 	// TOGGLE_BSEC_SERIAL_LOG
 	// TOGGLE_VENT_STATE
@@ -338,15 +350,39 @@ void controlSwitch(){
 			else Log_println("MQTT ist nun ausgeschaltet.");
 
 		}else if(mode.equals("TOGGLE_OWM")){
-			//toggle mqtt functionality
+			//toggle owm functionality
 			enableOwmData = !enableOwmData;
 
 			settings.begin("settings", false);
 			settings.putBool("enableOwmData",enableOwmData);
 			settings.end();
 
-			if(mqttEnabled) Log_println("Openweathermap ist nun eingeschaltet.");
+			if(enableOwmData) Log_println("Openweathermap ist nun eingeschaltet.");
 			else Log_println("Openweathermap ist nun ausgeschaltet.");
+
+		}else if(mode.equals("TOGGLE_OWM_MQTT")){
+			//toggle sending owm data to mqtt
+			enableOwmMqtt = !enableOwmMqtt;
+
+			settings.begin("settings", false);
+			settings.putBool("enableOwmMqtt",enableOwmMqtt);
+			settings.end();
+
+			if(enableOwmMqtt) Log_println("Openweathermap Daten werden nun an MQTT Broker gesendet.");
+			else Log_println("Openweathermap Daten werden nicht an MQTT Broker gesendet.");
+
+		}else if(mode.equals("TOGGLE_VENT_STATE_HTTP")){
+			//toggle request vent state from http API
+			if (!ventStateApiUrl.equals("")) {
+				enableVentStApi = !enableVentStApi;
+
+				settings.begin("settings", false);
+				settings.putBool("enableVentStApi",enableVentStApi);
+				settings.end();
+
+				if(enableVentStApi) Log_println("Der Lueftungsstatus wird nun von HTTP API abgerufen.");
+				else Log_println("Der Lueftungsstatus wird nicht von HTTP API abgerufen.");
+			}
 
 		}else if(mode.equals("TOGGLE_LEDS")){
 			//toggle mqtt functionality
@@ -558,6 +594,31 @@ void controlSwitch(){
 
 			Log_println("Das MQTT Topic zum Senden wurde eingestellt.");
 
+		}else if(mode.indexOf("SET_VENT_HTTP_URL") != -1){
+			// Set URL for vent state HTTP request
+			int spaceIndex = mode.indexOf(' ');
+			int secondSpaceIndex = mode.indexOf(' ', spaceIndex + 1);
+			ventStateApiUrl = mode.substring(spaceIndex + 1, secondSpaceIndex);
+
+			// Save to Flash
+			settings.begin("settings", false);
+			settings.putString("ventStateApiUrl", ventStateApiUrl);
+			settings.end();
+
+			Log_println("Das MQTT Topic zum Senden wurde eingestellt.");
+
+			// Turn on if URL not empty
+			if (!ventStateApiUrl.equals("")) {
+				enableVentStApi = true;
+
+				settings.begin("settings", false);
+				settings.putBool("enableVentStApi",enableVentStApi);
+				settings.end();
+
+				if(enableVentStApi) Log_println("Der Lueftungsstatus wird nun von HTTP API abgerufen.");
+				else Log_println("Der Lueftungsstatus wird nicht von HTTP API abgerufen.");
+			}
+
 		}else if(mode.indexOf("SET_ROOM_NAME") != -1){
 			// Set MQTT meta info room name
 			int spaceIndex = mode.indexOf(' ');
@@ -645,9 +706,13 @@ void setDefaults(){
 	mqttMetaRoomName = "myroom";
 
 	enableOwmData = false;
+	enableOwmMqtt = false;
 	owmApiKey = "";
 	longitude = "0.0";
 	latitude = "0.0";
+
+	enableVentStApi = false;
+	ventStateApiUrl = "";
 
 //	wifiSSID = "none";
 //	wifiPassword = "none";
@@ -1042,8 +1107,12 @@ void wifiConnectedHandle(WiFiClient client){
 						// Openweathermaps settings
 						client.println("<fieldset>");
 						client.println("<legend>Openweathermap Verbindung</legend>");
+						// Toggle Openweather functionality
 						if(enableOwmData) client.println("<p><a href=\"/toggle_owm\"><button class=\"button button3\">OWM ausschalten</button></a></p>");
 						else client.println("<p><a href=\"/toggle_owm\"><button class=\"button button4\">OWM einschalten</button></a></p>");
+						// Toggle Openweather data to MQTT
+						if(enableOwmMqtt) client.println("<p><a href=\"/toggle_send_owm_mqtt\"><button class=\"button button3\">OWM Daten per MQTT aus</button></a></p>");
+						else client.println("<p><a href=\"/toggle_send_owm_mqtt\"><button class=\"button button4\">OWM Daten per MQTT ein</button></a></p>");
 
 						// Input OWM API Key
 						client.println("<p>Openweathermap API Key eingeben:</p>");
@@ -1089,6 +1158,18 @@ void wifiConnectedHandle(WiFiClient client){
 						client.print("<input name='device_name' length=11>&nbsp;");
 						client.print("<input type='submit' class='send' value='OK'><br>");
 						client.print("</form>");
+
+						// Toggle HTTP vent state functionality
+						if(enableVentStApi) client.println("<p><a href=\"/toggle_vent_state_http\"><button class=\"button button3\">HTTP Lüftungsstatus aus</button></a></p>");
+						else client.println("<p><a href=\"/toggle_vent_state_http\"><button class=\"button button4\">HTTP Lüftungsstatus ein</button></a></p>");
+						// Input vent state HTTP request URL
+						client.println("<p>URL zum Abruf des Lüftungsstatus eingeben:</p>");
+						client.println("<p style=\"color:#008CC2;font-size:12px\"> <b>Aktuell: </b> " + ventStateApiUrl + "</p>");
+						client.print("<form method='get' action='a'>");
+						client.print("<input name='vent_state_url' length=11>&nbsp;");
+						client.print("<input type='submit' class='send' value='OK'><br>");
+						client.print("</form>");
+						
 						client.println("</fieldset><br>");
 
 						//Misc functions
@@ -1117,9 +1198,21 @@ void wifiConnectedHandle(WiFiClient client){
 						execControlSwitch = true;
 						refreshPage = true;
 
+					}else if (header.indexOf("GET /toggle_vent_state_http") >= 0) {
+						// Toggle HTTP Vent state functionality
+						mode = "TOGGLE_VENT_STATE_HTTP";
+						execControlSwitch = true;
+						refreshPage = true;
+
 					}else if (header.indexOf("GET /toggle_owm") >= 0) {
 						// Toggle openweathermap data
 						mode = "TOGGLE_OWM";
+						execControlSwitch = true;
+						refreshPage = true;
+
+					}else if (header.indexOf("GET /toggle_send_owm_mqtt") >= 0) {
+						// Toggle openweathermap data send to mqtt
+						mode = "TOGGLE_OWM_MQTT";
 						execControlSwitch = true;
 						refreshPage = true;
 
@@ -1159,6 +1252,23 @@ void wifiConnectedHandle(WiFiClient client){
 
 						param.replace("%2C",",");
 						mode = "SET_MQTT_SEND_TOPIC " + param;
+
+						execControlSwitch = true;
+						refreshPage = true;
+
+					}else if (header.startsWith("GET /a?vent_state_url=")) {
+						// Get vent stat HTTP API URL
+						String param,tmp;
+						tmp = header.substring(0,header.indexOf("\n"));
+						param = tmp.substring(22, tmp.lastIndexOf(' '));
+
+						param.replace("%2C",",");
+						param.replace("%3A",":");
+						param.replace("%2F","/");
+						param.replace("%3F","?");
+						param.replace("%3D","=");
+						param.replace("%26","&");
+						mode = "SET_VENT_HTTP_URL " + param;
 
 						execControlSwitch = true;
 						refreshPage = true;
@@ -1491,9 +1601,15 @@ bool readConfigFromFlash(){
 
 	// Openweather settings
 	enableOwmData = settings.getBool("enableOwmData", false);
+	enableOwmMqtt = settings.getBool("enableOwmMqtt", false);
 	owmApiKey = settings.getString("owmApiKey" , "");
 	longitude = settings.getString("longitude", "0.0");
 	latitude = settings.getString("latitude", "0.0");
+
+	// Vent state via http
+	enableVentStApi = settings.getBool("enableVentStApi", false);
+	Serial.println(String(enableVentStApi));
+	ventStateApiUrl = settings.getString("ventStateApiUrl", "");
 
 	settings.end();
 
@@ -1527,9 +1643,14 @@ void writeConfigToFlash(){
 
 	// Openweather settings
 	settings.putBool("enableOwmData", enableOwmData);
+	settings.putBool("enableOwmMqtt", enableOwmMqtt);
 	settings.putString("owmApiKey", owmApiKey);
 	settings.putString("longitude", longitude);
 	settings.putString("latitude", latitude);
+
+	// Vent state http api
+	settings.putBool("enableVentStApi", enableVentStApi);
+	settings.putString("ventStateApiUrl", ventStateApiUrl);
 
 	settings.end();
 
@@ -1568,6 +1689,10 @@ String getConfig(){
 	confTmp += "," + logBsecToSerial;
 	//13
 	confTmp += "," + String(tempOffset);
+	//14
+	confTmp += "," + String(enableVentStApi);
+	//15
+	confTmp += "," + ventStateApiUrl;
 
 	return confTmp;
 }
@@ -1675,10 +1800,13 @@ void importConfig(String confStr){
 			tempOffset = ((String)stringPtr).toFloat();
 			break;
 		case 14:
-			//spare
+			//Vent state API enabled
+			if(((String)stringPtr).equals("1")) enableVentStApi = true;
+			else enableVentStApi = false;
 			break;
 		case 15:
-			//spare
+			//Vent state API URL
+			ventStateApiUrl = stringPtr;
 			break;
 
 		}
@@ -1742,6 +1870,16 @@ void loop()
 		if (((unsigned long)(currentMillis - lastTimeWeatherState) >= refreshWeatherInterval)) {
 			refreshOpenweatherData();
 			lastTimeWeatherState = currentMillis;
+		}
+		
+	}
+
+	// Refresh venting state
+	if (enableVentStApi && WiFi.status()== WL_CONNECTED){
+		unsigned long currentMillis = millis();
+		if (((unsigned long)(currentMillis - lastTimeVentingState) >= refreshVentStateInterval)) {
+			refreshVentingStateFromUrl();
+			lastTimeVentingState = currentMillis;
 		}
 		
 	}
@@ -1928,7 +2066,7 @@ void sendMqttData(void)
   doc["gas_res"] = outputGasRes;
   doc["room"] = mqttMetaRoomName;
   doc["venting"] = ((String)ventingActive).toInt();
-  if (enableOwmData) {
+  if (enableOwmData && enableOwmMqtt) {
 	doc["temp_out"] = temp_out.toFloat();
 	doc["humidity_out"] = humidity_out.toFloat();
 	doc["windspeed"] = windspeed_out.toFloat();
@@ -1999,6 +2137,13 @@ String httpGETRequest(const char* serverName) {
   http.end();
 
   return payload;
+}
+
+void refreshVentingStateFromUrl() {
+	String ventStateReqRes = httpGETRequest(ventStateApiUrl.c_str());
+
+	if (ventStateReqRes.equals("True")) ventingActive = true;
+	else if (ventStateReqRes.equals("False")) ventingActive = false;
 }
 
 void refreshOpenweatherData() {
