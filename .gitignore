@@ -5,3 +5,4 @@
 .vscode/ipch
 .DS_Store
 lib/BSEC2/src
+lib/bme68x_library/src

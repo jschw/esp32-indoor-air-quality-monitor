@@ -1,6 +1,6 @@
 #include <Arduino.h>
-#include <bsec.h>
-#include <bsec_serialized_configurations_selectivity.h>
+#include <bsec2.h>
+//#include <bsec_serialized_configurations_selectivity.h>
 #include "time.h"
 #include "Preferences.h"
 #include "WiFi.h"
@@ -29,8 +29,8 @@ CRGB leds[NUM_LEDS];
 int min_color_mapped = 96; // = green
 int max_color_mapped = 0; // = red
 // Min/Max input values for mapping
-int min_input_mapping = 0;
-int max_input_mapping = 250;
+int min_input_mapping = 50;
+int max_input_mapping = 180;
 
 // Mode for display values
 // iaq, co2, o3, pm10 (=Pollen)
@@ -38,8 +38,9 @@ String displayMode = "iaq";
 
 // General variables
 //Set current firmware version
-extern const char SW_VERSION[] = {"1.0.0"};
+extern const char SW_VERSION[] = {"1.1.0"};
 //1.0.0: 28.05.2022 -> Initial proof of concept with wordclock base
+//1.1.0: 13.11.2022 -> Updated BSEC to 2.2.0.0, added http API support to get venting state from Bosch SHC
 
 String netDevName = "airquality";
 String deviceIP = "";
@@ -146,13 +147,12 @@ void clearLedPanel();
 
 // BME688 Sensor related functions
 void errLeds(void);
-void checkBsecStatus(Bsec& bsec);
-void updateBsecState(Bsec& bsec);
-void bsecCallback(const bme68x_data& input, const BsecOutput& outputs);
+void checkBsecStatus(Bsec2 bsec);
+void newDataCallback(const bme68xData data, const bsecOutputs outputs, Bsec2 bsec);
 void sendMqttData(void);
 void reconnectMqttClient(void);
-// Create an object of the class Bsec
-Bsec bsecInst(bsecCallback);
+// Create an object of the class Bsec2
+Bsec2 envSensor;
 
 // Air quality runtime variable declaration
 // Runtime variable declaration
@@ -174,24 +174,29 @@ void setup()
 {
 	// Open serial interface
 	Serial.begin(115200);
+	Wire.begin();
 
 	// Init the sensor interface
-	bsec_virtual_sensor_t sensorList[] = { 
+	bsecSensor sensorList[] = { 
 		BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
 		BSEC_OUTPUT_RAW_PRESSURE,
 		BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
 		BSEC_OUTPUT_IAQ,
 		BSEC_OUTPUT_CO2_EQUIVALENT,
 		BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,
-		BSEC_OUTPUT_COMPENSATED_GAS
+		BSEC_OUTPUT_RAW_GAS
 	};
 
-	if(!bsecInst.begin(0x77, Wire) ||
-		!bsecInst.setConfig(bsec_config_selectivity) ||
-		!bsecInst.updateSubscription(sensorList, ARRAY_LEN(sensorList), BSEC_SAMPLE_RATE_LP))
-		checkBsecStatus(bsecInst);
+	// Initialize the library and interfaces
+    if (!envSensor.begin(BME68X_I2C_ADDR_HIGH, Wire)) checkBsecStatus(envSensor);
+
+    // Subsribe to the desired BSEC2 outputs
+    if (!envSensor.updateSubscription(sensorList, ARRAY_LEN(sensorList), BSEC_SAMPLE_RATE_LP)) checkBsecStatus(envSensor);
+
+    // Whenever new data is available call the newDataCallback function
+    envSensor.attachCallback(newDataCallback);
 		
-	Serial.println("\nBSEC library version " + String(bsecInst.getVersion().major) + "." + String(bsecInst.getVersion().minor) + "." + String(bsecInst.getVersion().major_bugfix) + "." + String(bsecInst.getVersion().minor_bugfix));
+	Serial.println("\nBSEC library version " + String(envSensor.version.major) + "." + String(envSensor.version.minor) + "." + String(envSensor.version.major_bugfix) + "." + String(envSensor.version.minor_bugfix));
 	delay(10);
 
 	// Configure logging, turn on or off
@@ -201,7 +206,7 @@ void setup()
 	// Turn off Bluetooth
 	btStop();
 
-	// init FastLED
+	// Init FastLED
 	pinMode(DATA_PIN, OUTPUT);
 	FastLED.addLeds<CHIPSET, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
 	fill_solid(leds, 3, CRGB(0,0,0));
@@ -268,7 +273,7 @@ void setup()
 }
 
 void Log_println(String msg, int loglevel){
-	//Wrapper function for logging with timestamp and redirect to serial
+	// Wrapper function for logging with timestamp and redirect to serial
 	if(logToSerial) Serial.println(msg);
 
 	logging.setTimestamp(" --> ");
@@ -668,10 +673,8 @@ String getWiFiKey(bool keyTypeShort){
 }
 
 void wifiStartAPmode(){
-	//setup first time
-	//WiFi.onEvent(WiFiEvent);
+	// Setup first time
 	WiFi.mode(WIFI_MODE_APSTA);
-	//WiFi.softAP(AP_SSID, getWiFiKey(false).c_str());
 	WiFi.softAP(wifi_config_SSID.c_str());
 
 	//Set DNS
@@ -706,16 +709,12 @@ void wifiConnect(){
 			currentMillisAPMode = millis();
 		}
 		if(WiFi.status() != WL_CONNECTED){
-			//Auskommentierung wieder entfernen!
 			wifiActive = false;
 			WiFi.mode(WIFI_OFF);
 
 			clearLedPanel();
 
 			Log_println("Not connected, disabling WiFi and continue booting.",1);
-
-			//Das hier nur im Debug
-			//wifiConnect();
 		}
 
 	}
@@ -911,9 +910,7 @@ void wifiAPClientHandle()
 }
 
 double getWifiSignalStrength(){
-	//return map(WiFi.RSSI(), -100, 0, 0, 100);
-
-	//Convert rssi (dBm to percent)
+	// Convert rssi (dBm to percent)
 	int rssi = WiFi.RSSI();
 	double signalQuality = 0;
 
@@ -1019,6 +1016,7 @@ void wifiConnectedHandle(WiFiClient client){
 						
 						// Input IP/Port
 						client.println("<p>MQTT Verbindungsdaten eingeben:</p>");
+						client.println("<p style=\"color:#008CC2;font-size:12px\"> <b>Aktuell: </b> " + mqttIp + ", " + mqttPort + "</p>");
 						client.print("<form method='get' action='a'>");
 						client.print("<input name='mqtt_conn' length=11>&nbsp;");
 						client.print("<input type='submit' class='send' value='OK'><br><br><b>Format: </b> IP,Port<br>");
@@ -1026,6 +1024,7 @@ void wifiConnectedHandle(WiFiClient client){
 
 						// Input MQTT User settings
 						client.println("<p>MQTT Zugangsdaten zum Broker eingeben:</p>");
+						client.println("<p style=\"color:#008CC2;font-size:12px\"> <b>Aktuell: </b> " + mqttClientName + ", " + mqttUserName + ", " + mqttPassword + "</p>");
 						client.print("<form method='get' action='a'>");
 						client.print("<input name='mqtt_user' length=11>&nbsp;");
 						client.print("<input type='submit' class='send' value='OK'><br><br><b>Format: </b> Clientname,Username,Password<br>");
@@ -1033,6 +1032,7 @@ void wifiConnectedHandle(WiFiClient client){
 
 						// Input MQTT Topic
 						client.println("<p>MQTT Topic (senden) eingeben:</p>");
+						client.println("<p style=\"color:#008CC2;font-size:12px\"> <b>Aktuell: </b> " + mqttSendTopic + "</p>");
 						client.print("<form method='get' action='a'>");
 						client.print("<input name='mqtt_topic' length=11>&nbsp;");
 						client.print("<input type='submit' class='send' value='OK'><br>");
@@ -1047,6 +1047,7 @@ void wifiConnectedHandle(WiFiClient client){
 
 						// Input OWM API Key
 						client.println("<p>Openweathermap API Key eingeben:</p>");
+						client.println("<p style=\"color:#008CC2;font-size:12px\"> <b>Aktuell: </b> " + owmApiKey + "</p>");
 						client.print("<form method='get' action='a'>");
 						client.print("<input name='owm_key' length=11>&nbsp;");
 						client.print("<input type='submit' class='send' value='OK'><br>");
@@ -1054,6 +1055,7 @@ void wifiConnectedHandle(WiFiClient client){
 
 						// Input OWM location
 						client.println("<p>Standort eingeben:</p>");
+						client.println("<p style=\"color:#008CC2;font-size:12px\"> <b>Aktuell: </b> " + longitude + ", " + latitude + "</p>");
 						client.print("<form method='get' action='a'>");
 						client.print("<input name='owm_location' length=11>&nbsp;");
 						client.print("<input type='submit' class='send' value='OK'><br><br><b>Format: </b> Longitude,Latitude<br>");
@@ -1066,6 +1068,7 @@ void wifiConnectedHandle(WiFiClient client){
 
 						// Input room name
 						client.println("<p>Name des Raums eingeben:</p>");
+						client.println("<p style=\"color:#008CC2;font-size:12px\"> <b>Aktuell: </b> " + mqttMetaRoomName + "</p>");
 						client.print("<form method='get' action='a'>");
 						client.print("<input name='room_name' length=11>&nbsp;");
 						client.print("<input type='submit' class='send' value='OK'><br>");
@@ -1073,6 +1076,7 @@ void wifiConnectedHandle(WiFiClient client){
 
 						// Input Temperatur Offset
 						client.println("<p>Temperaturoffset eingeben:</p>");
+						client.println("<p style=\"color:#008CC2;font-size:12px\"> <b>Aktuell: </b> " + String(tempOffset) + "</p>");
 						client.print("<form method='get' action='a'>");
 						client.print("<input name='room_name' length=11>&nbsp;");
 						client.print("<input type='submit' class='send' value='OK'><br><br>(Dezimalzahl mit Punkt, z.B. 2.6)<br>");
@@ -1080,6 +1084,7 @@ void wifiConnectedHandle(WiFiClient client){
 
 						// Input Device Name
 						client.println("<p>Gerätename eingeben:</p>");
+						client.println("<p style=\"color:#008CC2;font-size:12px\"> <b>Aktuell: </b> " + netDevName + "</p>");
 						client.print("<form method='get' action='a'>");
 						client.print("<input name='device_name' length=11>&nbsp;");
 						client.print("<input type='submit' class='send' value='OK'><br>");
@@ -1222,7 +1227,6 @@ void wifiConnectedHandle(WiFiClient client){
 						refreshPage = true;
 
 					}else if (header.indexOf("GET /get_debugdata") >= 0) {
-						//Set daylight color on
 						String confString = getConfig();
 
 						// Display the HTML web page
@@ -1252,7 +1256,6 @@ void wifiConnectedHandle(WiFiClient client){
 						break;
 
 					}else if (header.indexOf("GET /get_recoverylink") >= 0) {
-						//Set daylight color on
 						String confString = getConfig();
 
 						// Display the HTML web page
@@ -1317,8 +1320,8 @@ void wifiConnectedHandle(WiFiClient client){
 					else if (aqi_out.toInt() == 3) colorAqiOut = "#FAF01E"; // yellow
 					else colorAqiOut = "#DC1414"; //red
 					// IAQ out
-					if (outputCo2 <= 550) colorCo2in = "#14DC14"; // green
-					else if (outputCo2 > 550 && outputCo2 < 800) colorCo2in = "#FAF01E"; // yellow
+					if (outputCo2 <= 650) colorCo2in = "#14DC14"; // green
+					else if (outputCo2 > 650 && outputCo2 < 1000) colorCo2in = "#FAF01E"; // yellow
 					else colorCo2in = "#DC1414"; //red
 					
 					
@@ -1399,7 +1402,7 @@ void wifiConnectedHandle(WiFiClient client){
 						}
 					}
 
-					// Display current state of backlight
+					// Display current state of LEDs
 					client.println("<p>LED-Anzeige ein/ausschalten</p>");
 
 					if (!ledsEnabled) {
@@ -1409,7 +1412,7 @@ void wifiConnectedHandle(WiFiClient client){
 					}
 
 
-					//Change Standby mode
+					// Change traffic light mode
 					client.println("<p>Ampel schalten nach Messwert:</p>");
 					if(displayMode.equals("iaq")) client.println("<p><a href=\"/set_display_iaq\"><button class=\"button button3\">IAQ</button></a>&nbsp;");
 					else client.println("<p><a href=\"/set_display_iaq\"><button class=\"button button4\">IAQ</button></a>&nbsp;");
@@ -1714,8 +1717,10 @@ void loop()
 	//execute switch for control options
 	if(!mode.equals("")) controlSwitch();
 
-	if(!bsecInst.run())
-		checkBsecStatus(bsecInst);
+	if (!envSensor.run())
+    {
+        checkBsecStatus(envSensor);
+    }
 
 	if (!mqttClient.connected() && mqttEnabled && wifiConnected) {
 		mqttConnected = false;
@@ -1818,33 +1823,15 @@ void reconnectMqttClient(void) {
   }
 }
 
-void updateBsecState(Bsec& bsec)
-{
-  static uint16_t stateUpdateCounter = 0;
-	bool update = false;
-  
-	if (stateUpdateCounter == 0) {
-    const bsec_output_t* iaq = bsec.getOutput(BSEC_OUTPUT_IAQ);
-		/* First state update when IAQ accuracy is >= 3 */
-    if (iaq && iaq->accuracy >= 3) {
-      update = true;
-      stateUpdateCounter++;
-    }
-	}
-
-	if (update)
-    checkBsecStatus(bsec);
-}
-
-void bsecCallback(const bme68x_data& input, const BsecOutput& outputs) 
+void newDataCallback(const bme68xData data, const bsecOutputs outputs, Bsec2 bsec)
 { 
-  if (!outputs.len) 
+  if (!outputs.nOutputs) 
     return;
     
-  if(logBsecToSerial) Serial.println("BSEC outputs:\n\ttimestamp = " + String((int)(outputs.outputs[0].time_stamp / INT64_C(1000000))));
+  if(logBsecToSerial) Serial.println("BSEC outputs:\n\ttimestamp = " + String((int)(outputs.output[0].time_stamp / INT64_C(1000000))));
 
-  for (uint8_t i = 0; i < outputs.len; i++) {
-    const bsec_output_t& output = outputs.outputs[i];
+  for (uint8_t i = 0; i < outputs.nOutputs; i++) {
+    const bsecData output  = outputs.output[i];
 
     switch (output.sensor_id) {
       case BSEC_OUTPUT_IAQ:
@@ -1872,7 +1859,7 @@ void bsecCallback(const bme68x_data& input, const BsecOutput& outputs)
       case BSEC_OUTPUT_BREATH_VOC_EQUIVALENT:
         if(logBsecToSerial) Serial.println("\tBreath VOC Equivalent = " + String(output.signal));
         outputVocEquiv = output.signal;
-	  case BSEC_OUTPUT_COMPENSATED_GAS:
+	  case BSEC_OUTPUT_RAW_GAS:
         if(logBsecToSerial) Serial.println("\tGas resistance = " + String(output.signal));
         outputGasRes = output.signal;
         break;
@@ -1899,11 +1886,11 @@ void bsecCallback(const bme68x_data& input, const BsecOutput& outputs)
   // -> Avoid bouncing between two states
   if (abs(hueVal - lastChangeHueValue) >= stateChangeHysteresis) {
     // Determine which LED should be turned on
-    if (hueVal >= 75) {
+    if (hueVal >= 64) {
       // State: Good -> Green
       airQualityState = 2;
     }
-    else if (hueVal < 75 && hueVal >= 32) {
+    else if (hueVal < 64 && hueVal >= 32) {
       // State: Quite good -> Yellow
       airQualityState = 1;
     }
@@ -1925,8 +1912,6 @@ void bsecCallback(const bme68x_data& input, const BsecOutput& outputs)
 
   if (mqttConnected)
     sendMqttData();
-  
-  updateBsecState(bsecInst);
 }
 
 void sendMqttData(void)
@@ -1970,25 +1955,22 @@ void sendMqttData(void)
   mqttClient.loop();
 }
 
-void checkBsecStatus(Bsec& bsec)
+void checkBsecStatus(Bsec2 bsec)
 {
-  int bme68x_status = (int)bsec.getBme68xStatus();
-  int bsec_status = (int)bsec.getBsecStatus();
-  
-  if (bsec_status < BSEC_OK) {
-      Serial.println("BSEC error code : " + String(bsec_status));
+  if (bsec.status < BSEC_OK) {
+      Serial.println("BSEC error code : " + String(bsec.status));
       for (;;)
         errLeds(); /* Halt in case of failure */
-  } else if (bsec_status > BSEC_OK) {
-      Serial.println("BSEC warning code : " + String(bsec_status));
+  } else if (bsec.status > BSEC_OK) {
+      Serial.println("BSEC warning code : " + String(bsec.status));
   }
 
-  if (bme68x_status < BME68X_OK) {
-      Serial.println("BME68X error code : " + String(bme68x_status));
+  if (bsec.sensor.status < BME68X_OK) {
+      Serial.println("BME68X error code : " + String(bsec.sensor.status));
       for (;;)
         errLeds(); /* Halt in case of failure */
-  } else if (bme68x_status > BME68X_OK) {
-      Serial.println("BME68X warning code : " + String(bme68x_status));
+  } else if (bsec.sensor.status > BME68X_OK) {
+      Serial.println("BME68X warning code : " + String(bsec.sensor.status));
   }
 }
 
