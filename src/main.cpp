@@ -48,6 +48,7 @@ String deviceIP = "";
 int commErrorCounter = 0;
 
 bool ventingActive = false;
+bool displayVentingState = true;
 
 Preferences settings;
 
@@ -310,6 +311,7 @@ void controlSwitch(){
 	// TOGGLE_LEDS
 	// TOGGLE_BSEC_SERIAL_LOG
 	// TOGGLE_VENT_STATE
+	// TOGGLE_DISP_VENT_STATE
 	// SET_BRIGHTNESS 40 (values: 40-255)
 	// SET_DEVICENAME NeuerName <- set the Wifi DNS name: http://devicename.local
 	// SET_DEBUGMODE
@@ -412,12 +414,23 @@ void controlSwitch(){
 			if(logBsecToSerial) Log_println("BSEC Output Log an Serial ist nun eingeschaltet.");
 			else Log_println("BSEC Output Log an Serial ist nun ausgeschaltet.");
 
-		}else if(mode.equals("TOGGLE_VENTING_STATE")){
+		}else if(mode.equals("TOGGLE_VENT_STATE")){
 			//toggle the venting state flag
 			ventingActive = !ventingActive;
 
 			if(ventingActive) Log_println("Es wird gerade gelueftet.");
 			else Log_println("Es wird nun nicht mehr gelueftet.");
+
+		}else if(mode.equals("TOGGLE_DISP_VENT_STATE")){
+			//toggle the venting state display state
+			displayVentingState= !displayVentingState;
+
+			settings.begin("settings", false);
+			settings.putBool("dispVentState",displayVentingState);
+			settings.end();
+
+			if(ventingActive) Log_println("Anzeige Lueftungsstatus ein.");
+			else Log_println("Anzeige Lueftungsstatus aus.");
 
 		}else if(mode.equals("GET_CONFIG")){
 			//get all variable values saved in flash
@@ -695,6 +708,7 @@ void setDefaults(){
 	logBsecToSerial = true;
 	brightness = 40;
 	tempOffset = -2.6;
+	displayVentingState = true;
 
 	mqttEnabled = true;
 	mqttIp = "192.160.0.1";
@@ -1017,7 +1031,7 @@ void wifiConnectedHandle(WiFiClient client){
 					// handle the airquality monitor function based on header data
 					if (header.indexOf("GET /toggle_venting") >= 0) {
 						// Toggle Zustand Fenster
-						mode = "TOGGLE_VENTING_STATE";
+						mode = "TOGGLE_VENT_STATE";
 						execControlSwitch = true;
 						refreshPage = true;
 
@@ -1075,6 +1089,11 @@ void wifiConnectedHandle(WiFiClient client){
 						// Change color front
 						client.println("<fieldset>");
 						client.println("<legend>MQTT Verbindung</legend>");
+
+						// Toggle display venting state
+						if(displayVentingState) client.println("<p><a href=\"/toggle_disp_vent_state\"><button class=\"button button3\">Lüftungsstatus ausblenden</button></a></p>");
+						else client.println("<p><a href=\"/toggle_disp_vent_state\"><button class=\"button button4\">Lüftungsstatus anzeigen</button></a></p>");
+						
 						// Toggle MQTT functionality
 						if(mqttEnabled) client.println("<p><a href=\"/toggle_mqtt\"><button class=\"button button3\">MQTT Client ausschalten</button></a></p>");
 						else client.println("<p><a href=\"/toggle_mqtt\"><button class=\"button button4\">MQTT Client einschalten</button></a></p>");
@@ -1191,6 +1210,12 @@ void wifiConnectedHandle(WiFiClient client){
 						// The HTTP response ends with another blank line
 						client.println();
 						break;
+
+					}else if (header.indexOf("GET /toggle_disp_vent_state") >= 0) {
+						// Toggle display vent state info
+						mode = "TOGGLE_DISP_VENT_STATE";
+						execControlSwitch = true;
+						refreshPage = true;
 
 					}else if (header.indexOf("GET /toggle_mqtt") >= 0) {
 						// Toggle MQTT functionality
@@ -1502,13 +1527,16 @@ void wifiConnectedHandle(WiFiClient client){
 
 
 					// Display current state of venting only if MQTT enabled & connected
-					if (mqttEnabled && mqttConnected) {
+					if (displayVentingState) {
 						client.println("<p><br>Lüftungsstatus aktuell: " + (String) ((ventingActive) ? "Fenster geöffnet" : "Fenster geschlossen") + "</p>");
 
-						if (ventingActive) {
-							client.println("<p><a href=\"/toggle_venting\"><button class=\"button\">Schließen</button></a></p>");
-						} else {
-							client.println("<p><a href=\"/toggle_venting\"><button class=\"button button2\">Öffnen</button></a></p>");
+						if (!enableVentStApi) {
+
+							if (ventingActive) {
+								client.println("<p><a href=\"/toggle_venting\"><button class=\"button\">Schließen</button></a></p>");
+							} else {
+								client.println("<p><a href=\"/toggle_venting\"><button class=\"button button2\">Öffnen</button></a></p>");
+							}
 						}
 					}
 
@@ -1589,6 +1617,8 @@ bool readConfigFromFlash(){
 
 	tempOffset = settings.getFloat("tempOffset", -2.6);
 
+	displayVentingState = settings.getBool("dispVentState", true);
+
 	// MQTT settings
 	mqttEnabled = settings.getBool("mqttEnabled", true);
 	mqttIp = settings.getString("mqttIp", "192.160.0.1");
@@ -1630,6 +1660,7 @@ void writeConfigToFlash(){
 	settings.putString("netDevName", netDevName);
 	settings.putBool("logBsecToSerial", logBsecToSerial);
 	settings.putFloat("tempOffset", tempOffset);
+	settings.putBool("dispVentState", displayVentingState);
 
 	// MQTT settings
 	settings.putBool("mqttEnabled", mqttEnabled);
@@ -1693,6 +1724,8 @@ String getConfig(){
 	confTmp += "," + String(enableVentStApi);
 	//15
 	confTmp += "," + ventStateApiUrl;
+	//16
+	confTmp += "," + String(displayVentingState);
 
 	return confTmp;
 }
@@ -1807,6 +1840,12 @@ void importConfig(String confStr){
 		case 15:
 			//Vent state API URL
 			ventStateApiUrl = stringPtr;
+			break;
+		case 16:
+			//Vent state display
+			if(((String)stringPtr).equals("1")) displayVentingState = true;
+			else displayVentingState = false;
+			break;
 			break;
 
 		}
@@ -2142,8 +2181,8 @@ String httpGETRequest(const char* serverName) {
 void refreshVentingStateFromUrl() {
 	String ventStateReqRes = httpGETRequest(ventStateApiUrl.c_str());
 
-	if (ventStateReqRes.equals("True")) ventingActive = true;
-	else if (ventStateReqRes.equals("False")) ventingActive = false;
+	if (ventStateReqRes.equals("True") || ventStateReqRes.equals("1")) ventingActive = true;
+	else if (ventStateReqRes.equals("False") || ventStateReqRes.equals("0")) ventingActive = false;
 }
 
 void refreshOpenweatherData() {
